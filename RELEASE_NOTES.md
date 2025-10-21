@@ -1,7 +1,7 @@
 # Release Notes - Version 1.0
 
 **Release Date:** October 21, 2025  
-**Download:** [Practical_C_Programming-Idioms_and_Patterns-v1.0.pdf](https://codeberg.org/_a/C_Idioms_And_Patterns/releases/tag/v1.0)
+**Download:** [Practical_C_Programming-Idioms_and_Patterns-v1.0.pdf](https://codeberg.org/_a/C_Idioms_And_Patterns/releases)
 
 ## 🎉 First Complete Release!
 
@@ -142,7 +142,7 @@ Four recommended approaches:
 ## 📥 Download Options
 
 ### Main Release
-- **[Practical_C_Programming-Idioms_and_Patterns-v1.0.pdf](https://codeberg.org/_a/C_Idioms_And_Patterns/releases/tag/v1.0)** (3 MB)
+- **[Practical_C_Programming-Idioms_and_Patterns-v1.0.pdf](https://codeberg.org/_a/C_Idioms_And_Patterns/releases)** (3 MB)
 
 ### Build from Source
 Clone the repository and compile with LaTeX:

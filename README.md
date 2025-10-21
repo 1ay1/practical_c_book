@@ -36,7 +36,7 @@ Ever wondered how professional C programmers structure their code? This book bri
 
 ### Latest Release
 
-**[Download PDF (v1.0)](https://codeberg.org/_a/C_Idioms_And_Patterns/releases)**
+**[Download PDF (Latest Version)](https://codeberg.org/_a/C_Idioms_And_Patterns/releases)**
 
 The PDF is optimized for both screen reading and printing. It includes:
 - Clickable table of contents
