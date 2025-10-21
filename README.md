@@ -1,12 +1,12 @@
 # Practical C Programming: Idioms & Patterns They Don't Teach in Books
 
-A comprehensive 577-page book covering real-world C programming patterns and idioms that are rarely taught in traditional textbooks. Written for intermediate to advanced C programmers who want to understand how professionals actually write C code.
+A comprehensive 642-page book covering real-world C programming patterns and idioms that are rarely taught in traditional textbooks. Written for intermediate to advanced C programmers who want to understand how professionals actually write C code.
 
 ## 📖 About This Book
 
 Ever wondered how professional C programmers structure their code? This book bridges the gap between "I know C syntax" and "I can write production C code." It's packed with practical patterns used in SQLite, Redis, Linux kernel, Git, and other major C projects.
 
-### What's Inside (577 Pages!)
+### What's Inside (642 Pages!)
 
 - **Opaque Pointers** - Information hiding and API design
 - **Function Pointers & Callbacks** - Polymorphism without OOP
@@ -49,7 +49,7 @@ Available formats:
 ### File Information
 
 - **Format**: PDF, EPUB
-- **Pages**: 577
+- **Pages**: 642
 - **Size**: ~3-4 MB (varies by format)
 - **Optimized for**: Kindle, tablets, desktop reading, e-readers
 - **Updates**: Automatically built on every release tag
@@ -245,4 +245,4 @@ return 0;
 
 ---
 
-*Last Updated: 2025 | Version 1.0 | 577 pages*
+*Last Updated: 2025 | Version 1.0 | 642 pages*
