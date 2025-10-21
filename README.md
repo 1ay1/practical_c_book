@@ -36,20 +36,23 @@ Ever wondered how professional C programmers structure their code? This book bri
 
 ### Latest Release
 
-**[Download PDF (Latest Version)](https://codeberg.org/_a/C_Idioms_And_Patterns/src/branch/main/main.pdf)**
+All formats are automatically built and released via GitHub Actions:
 
-The PDF is optimized for both screen reading and printing. It includes:
-- Clickable table of contents
-- Syntax-highlighted code examples
-- Professional typesetting via LaTeX
-- 6×9 inch format (perfect for e-readers)
+**[📦 Download from GitHub Releases](https://github.com/1ay1/practial_c_book/releases)**
+
+Available formats:
+- **PDF (Standard)** - `practical-c-book.pdf` - Optimized for screen reading and printing
+- **PDF (Kindle)** - `practical-c-book-kindle.pdf` - Larger text, optimized for Kindle devices
+- **EPUB** - `practical-c-book.epub` - For e-readers (Kobo, Apple Books, etc.)
+- **Source Code** - `practical-c-book-source.tar.gz` - Full LaTeX source
 
 ### File Information
 
-- **Format**: PDF
+- **Format**: PDF, EPUB
 - **Pages**: 577
-- **Size**: ~3 MB
-- **Optimized for**: Kindle, tablets, desktop reading
+- **Size**: ~3-4 MB (varies by format)
+- **Optimized for**: Kindle, tablets, desktop reading, e-readers
+- **Updates**: Automatically built on every release tag
 
 ## ⚠️ Important: This Is NOT a Beginner Book
 
@@ -79,18 +82,23 @@ Want to compile the book yourself or make modifications?
 
 ```bash
 # Clone the repository
-git clone https://codeberg.org/_a/C_Idioms_And_Patterns.git
-cd C_Idioms_And_Patterns
+git clone git@github.com:1ay1/practial_c_book.git
+cd practial_c_book
 
-# Compile (run twice for proper TOC)
-pdflatex main.tex
-pdflatex main.tex
+# Build standard PDF
+make
+
+# Build Kindle-optimized PDF
+make kindle
+
+# Build both PDFs
+make both
+
+# Build EPUB format
+make epub
 
 # Or use the build script
 ./build.sh
-
-# Or use Make
-make
 ```
 
 ### Project Structure
@@ -164,7 +172,7 @@ c_custom_book/
 
 ## 🐛 Found an Error?
 
-Report issues at: https://codeberg.org/_a/C_Idioms_And_Patterns/issues
+Report issues at: https://github.com/1ay1/practial_c_book/issues
 
 Include:
 - Page number
@@ -206,7 +214,7 @@ This book compiles patterns from:
 
 Questions? Suggestions? Found this helpful?
 
-Open an issue or discussion on Codeberg: https://codeberg.org/_a/C_Idioms_And_Patterns
+Open an issue or discussion on GitHub: https://github.com/1ay1/practial_c_book/issues
 
 ## 🎓 Learning Path
 
@@ -218,7 +226,14 @@ After this book, check out:
 
 ## ⭐ Star This Repository
 
-If you found this book useful, give it a star on Codeberg!
+If you found this book useful, give it a star on GitHub!
+
+## 🤖 Automated Builds
+
+This repository uses GitHub Actions to automatically build and release the book in multiple formats:
+- Every push to `main` creates build artifacts
+- Every tagged release (e.g., `v1.0`) creates a GitHub Release with all formats
+- All builds include: Standard PDF, Kindle PDF, EPUB, and source code archive
 
 ---
 
