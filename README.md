@@ -38,7 +38,7 @@ Ever wondered how professional C programmers structure their code? This book bri
 
 All formats are automatically built and released via GitHub Actions:
 
-**[📦 Download from GitHub Releases](https://github.com/1ay1/practial_c_book/releases)**
+**[📦 Download from GitHub Releases](https://github.com/1ay1/practical_c_book/releases)**
 
 Available formats:
 - **PDF (Standard)** - `practical-c-book.pdf` - Optimized for screen reading and printing
@@ -82,8 +82,8 @@ Want to compile the book yourself or make modifications?
 
 ```bash
 # Clone the repository
-git clone git@github.com:1ay1/practial_c_book.git
-cd practial_c_book
+git clone git@github.com:1ay1/practical_c_book.git
+cd practical_c_book
 
 # Build standard PDF
 make
@@ -172,7 +172,7 @@ c_custom_book/
 
 ## 🐛 Found an Error?
 
-Report issues at: https://github.com/1ay1/practial_c_book/issues
+Report issues at: https://github.com/1ay1/practical_c_book/issues
 
 Include:
 - Page number
@@ -214,7 +214,7 @@ This book compiles patterns from:
 
 Questions? Suggestions? Found this helpful?
 
-Open an issue or discussion on GitHub: https://github.com/1ay1/practial_c_book/issues
+Open an issue or discussion on GitHub: https://github.com/1ay1/practical_c_book/issues
 
 ## 🎓 Learning Path
 
