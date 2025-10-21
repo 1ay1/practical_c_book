@@ -1,0 +1,1178 @@
+\chapter{String Handling Patterns}
+
+\section{The Reality of C Strings}
+
+C strings are just arrays of characters ending in \texttt{\textbackslash 0}. This simplicity is powerful but dangerous. More security vulnerabilities stem from string handling than any other source. Buffer overflows, format string attacks, SQL injection - all start with mishandled strings. If cybersecurity had a Most Wanted list, string handling bugs would be \#1 with a bullet. (A buffer overflow bullet, naturally.)
+
+Unlike higher-level languages, C doesn't have a string "object" with methods. A string is simply a pointer to the first character, and you rely on that null terminator to know where it ends. One missing byte and your program corrupts memory, crashes, or worse - gets exploited. It's like playing Operation, except when you touch the sides, hackers get root access.
+
+\begin{lstlisting}
+// This is all a C string is:
+char str[] = "Hello";
+// In memory (6 bytes):
+// 'H' 'e' 'l' 'l' 'o' '\0'
+//  0   1   2   3   4   5
+
+// What most programmers don't realize:
+sizeof(str)    // 6 (includes null terminator)
+strlen(str)    // 5 (excludes null terminator)
+
+// The null terminator is ALWAYS there in literals
+// But it's YOUR responsibility to maintain it!
+\end{lstlisting}
+
+\begin{warningbox}
+The number one source of security vulnerabilities in C: forgetting the null terminator. Heartbleed (OpenSSL)? String handling. SQLSlammer worm? Buffer overflow in string code. Every major C CVE traces back to strings. If strings were a person, they'd have their own dedicated security team. And therapy sessions.
+\end{warningbox}
+
+\section{String Memory: Stack vs Heap}
+
+\begin{lstlisting}
+// Stack allocation - automatic cleanup
+void func1(void) {
+    char str[100];  // 100 bytes on stack
+    strcpy(str, "Hello");
+    // str is automatically freed when func returns
+}
+
+// Heap allocation - manual cleanup required
+void func2(void) {
+    char* str = malloc(100);  // 100 bytes on heap
+    if (str) {
+        strcpy(str, "Hello");
+        free(str);  // YOU must free!
+    }
+}
+
+// String literal - in read-only memory (.rodata section)
+const char* func3(void) {
+    return "Hello";  // OK - literal has static storage
+}
+
+// DANGEROUS - returning stack address
+char* func4(void) {
+    char str[100];  // On stack
+    strcpy(str, "Hello");
+    return str;  // BUG! Returns dangling pointer
+}
+
+// What actually happens in memory:
+// Stack:   grows downward, fast, limited size (~8MB)
+// Heap:    grows upward, slower, large size (GBs)
+// .rodata: read-only data segment, program lifetime
+// .data:   initialized data segment, program lifetime
+
+// String literals are in .rodata:
+char* s1 = "Hello";
+char* s2 = "Hello";
+// s1 == s2 is often TRUE! Compiler may merge identical literals
+// Don't rely on this - implementation defined
+
+// Trying to modify literal = SEGFAULT
+char* s = "Hello";
+s[0] = 'h';  // CRASH! Writing to read-only memory
+               // The OS: "I'm gonna stop you right there"
+\end{lstlisting}
+
+\section{The Null Terminator: Source of Infinite Bugs}
+
+\begin{lstlisting}
+// Every C programmer's nightmare
+
+// Example 1: Forgot to allocate space for null
+char buf[5];
+strcpy(buf, "Hello");  // BUFFER OVERFLOW!
+// "Hello" is 5 chars + 1 null = 6 bytes
+// buf is only 5 bytes
+// Writes beyond buffer, corrupts memory
+// Congratulations, you've just created a vulnerability
+
+// Example 2: strncpy doesn't guarantee null termination
+char buf[5];
+strncpy(buf, "HelloWorld", 5);  // Copies "Hello"
+// buf = {'H', 'e', 'l', 'l', 'o'}  NO NULL TERMINATOR!
+printf("%s\n", buf);  // Undefined behavior!
+// printf reads until it finds \0, could read garbage for megabytes
+
+// Example 3: Manual null termination
+char buf[6];
+strncpy(buf, "HelloWorld", sizeof(buf) - 1);
+buf[sizeof(buf) - 1] = '\0';  // ALWAYS do this!
+// Now buf = {'H', 'e', 'l', 'l', 'o', '\0'}  SAFE!
+
+// Example 4: Reading input
+char buf[100];
+fgets(buf, sizeof(buf), stdin);
+// fgets DOES null-terminate, but includes newline!
+// Input: "Hello\n"
+// buf = {'H', 'e', 'l', 'l', 'o', '\n', '\0'}
+// Need to remove \n:
+buf[strcspn(buf, "\n")] = '\0';
+
+// Example 5: Binary data (not null-terminated)
+char data[100];
+int n = read(fd, data, sizeof(data));
+// data is NOT null-terminated!
+// Don't use strlen(), strcmp() - they expect null terminator
+// Use memcpy(), memcmp() with explicit length
+// strlen() is the wrong tool for the job here
+\end{lstlisting}
+
+\section{String Duplication: The Right Way}
+
+\begin{lstlisting}
+#include <string.h>
+#include <stdlib.h>
+
+// WRONG - multiple bugs
+char* copy_string_wrong(const char* src) {
+    char* dst;              // Uninitialized pointer
+    strcpy(dst, src);       // Writing to random memory!
+    return dst;             // Returning garbage
+}
+
+// STILL WRONG - memory leak
+char* copy_string_leak(const char* src) {
+    char* dst = malloc(strlen(src) + 1);
+    strcpy(dst, src);
+    return dst;
+    // Caller must free, but no documentation!
+    // Leads to memory leaks
+}
+
+// CORRECT - with error checking
+char* copy_string(const char* src) {
+    if (!src) return NULL;  // Validate input
+
+    size_t len = strlen(src);
+    char* dst = malloc(len + 1);  // +1 for null terminator!
+
+    if (!dst) return NULL;  // Check allocation
+
+    memcpy(dst, src, len + 1);  // Copy including null
+    // Or: strcpy(dst, src);
+
+    return dst;  // Caller must free!
+}
+
+// BETTER - use POSIX strdup if available
+char* str = strdup("hello");  // Allocates and copies
+if (str) {
+    // Use string...
+    free(str);  // Must free
+}
+
+// PRO TIP: strdup implementation
+char* my_strdup(const char* s) {
+    if (!s) return NULL;
+    size_t len = strlen(s) + 1;
+    char* d = malloc(len);
+    return d ? memcpy(d, s, len) : NULL;
+}
+
+// PRODUCTION: strndup for bounded copy
+char* str = strndup("hello world", 5);  // Copies "hello"
+// Safer than strdup for untrusted input
+free(str);
+\end{lstlisting}
+
+\begin{notebox}
+The \texttt{+1} for the null terminator is the most common source of string bugs. Always remember it! \texttt{strlen("Hello")} returns 5, but you need 6 bytes to store it. That one byte is like the friend you forgot to invite to your party—it WILL come back to haunt you.
+\end{notebox}
+
+\section{Safe String Operations: strncpy and Friends}
+
+\begin{lstlisting}
+#include <string.h>
+
+char buffer[100];
+
+// DANGEROUS - buffer overflow!
+strcpy(buffer, user_input);    // What if user_input > 100 bytes?
+strcat(buffer, more_input);    // Could overflow
+
+// SAFER - bounded versions
+strncpy(buffer, user_input, sizeof(buffer) - 1);
+buffer[sizeof(buffer) - 1] = '\0';  // Ensure null termination
+
+strncat(buffer, more_input, sizeof(buffer) - strlen(buffer) - 1);
+
+// But strncpy has quirks!
+char buf[10];
+strncpy(buf, "Hello", 10);
+// If src < n, strncpy pads with zeros
+// buf = {'H','e','l','l','o','\0','\0','\0','\0','\0'}
+
+strncpy(buf, "Hello World!", 10);
+// If src >= n, NO null terminator added!
+// buf = {'H','e','l','l','o',' ','W','o','r','l'}  NOT NULL-TERMINATED!
+
+// This is why you MUST manually add null:
+strncpy(buf, src, sizeof(buf) - 1);
+buf[sizeof(buf) - 1] = '\0';
+
+// strncat is safer - always null-terminates
+char buf[10] = "Hello";
+strncat(buf, " World", sizeof(buf) - strlen(buf) - 1);
+// buf = "Hello Wor\0"  (truncated but null-terminated)
+\end{lstlisting}
+
+\subsection{Modern Safe Alternatives}
+
+\begin{lstlisting}
+// C11 bounds-checking interfaces (Annex K)
+// Not widely available, but safer when they exist
+#ifdef __STDC_LIB_EXT1__
+    // Returns error code, always null-terminates
+    errno_t strcpy_s(char* dest, rsize_t destsz, const char* src);
+    errno_t strcat_s(char* dest, rsize_t destsz, const char* src);
+
+    // Usage
+    char buf[100];
+    if (strcpy_s(buf, sizeof(buf), "Hello") == 0) {
+        // Success - buf is guaranteed null-terminated
+    }
+#endif
+
+// BSD strlcpy/strlcat (better design, widely used)
+#if defined(__BSD_VISIBLE) || defined(__APPLE__)
+    size_t strlcpy(char* dst, const char* src, size_t size);
+    size_t strlcat(char* dst, const char* src, size_t size);
+
+    // Always null-terminates
+    // Returns strlen(src) or strlen(dst) + strlen(src)
+    // Can detect truncation:
+    char buf[10];
+    size_t len = strlcpy(buf, "Hello World", sizeof(buf));
+    if (len >= sizeof(buf)) {
+        // Truncation occurred!
+        // len is how much we WOULD HAVE written
+    }
+#endif
+
+// Roll your own safe copy (portable)
+size_t safe_strcpy(char* dst, const char* src, size_t size) {
+    if (size == 0) return strlen(src);
+
+    size_t i;
+    for (i = 0; i < size - 1 && src[i]; i++) {
+        dst[i] = src[i];
+    }
+    dst[i] = '\0';
+
+    // Return total length of src (like strlcpy)
+    while (src[i]) i++;
+    return i;
+}
+\end{lstlisting}
+
+\section{Buffer Overflows: How They Happen}
+
+\begin{lstlisting}
+// Classic buffer overflow vulnerability
+
+// Vulnerable code:
+void process_user_input(void) {
+    char buffer[64];
+    printf("Enter name: ");
+    gets(buffer);  // NEVER USE gets()!
+    // If user enters 100 chars, writes beyond buffer
+    // Corrupts stack, can overwrite return address
+    // Attacker can inject malicious code!
+}
+
+// What happens in memory (x86-64):
+// Stack layout:
+// [buffer 64 bytes][saved rbp 8 bytes][return address 8 bytes]
+//
+// User enters 80 bytes:
+// [64 bytes overflow][overwrite rbp][overwrite ret address]
+//
+// Attacker can set return address to point to shellcode
+// When function returns, executes attacker's code!
+
+// FIX 1: Use fgets
+void safe_input_fgets(void) {
+    char buffer[64];
+    printf("Enter name: ");
+    if (fgets(buffer, sizeof(buffer), stdin)) {
+        // fgets reads at most sizeof(buffer)-1 chars
+        // Always null-terminates
+        buffer[strcspn(buffer, "\n")] = '\0';  // Remove newline
+    }
+}
+
+// FIX 2: Use scanf with width
+void safe_input_scanf(void) {
+    char buffer[64];
+    printf("Enter name: ");
+    if (scanf("%63s", buffer) == 1) {  // 63 = sizeof-1
+        // Reads at most 63 chars + null
+    }
+}
+
+// FIX 3: Use getline (POSIX)
+void safe_input_getline(void) {
+    char* buffer = NULL;
+    size_t size = 0;
+    printf("Enter name: ");
+    ssize_t len = getline(&buffer, &size, stdin);
+    if (len > 0) {
+        // getline allocates buffer dynamically
+        // No buffer overflow possible!
+        buffer[strcspn(buffer, "\n")] = '\0';
+        printf("You entered: %s\n", buffer);
+        free(buffer);  // Must free!
+    }
+}
+\end{lstlisting}
+
+\begin{warningbox}
+\texttt{gets()} is so dangerous it was REMOVED from C11 standard! Any code using it is vulnerable. Always use \texttt{fgets()} or \texttt{getline()} instead. gets() is the function equivalent of "hold my beer and watch this"—nothing good comes from it.
+\end{warningbox}
+
+\section{Format String Vulnerabilities}
+
+\begin{lstlisting}
+// Another major security issue
+
+// VULNERABLE:
+void log_message(const char* user_input) {
+    printf(user_input);  // NEVER DO THIS!
+    // If user_input = "%s%s%s%s%s"
+    // printf reads random stack values
+    // Can crash or leak sensitive data
+
+    // If user_input = "%n"
+    // Writes to arbitrary memory location
+    // Can overwrite return address, execute code
+}
+
+// FIX: Use format string
+void log_message_safe(const char* user_input) {
+    printf("%s", user_input);  // Safe
+    // printf can't interpret format specifiers in data
+}
+
+// Real-world example from actual vulnerability:
+void vulnerable_logger(const char* msg) {
+    fprintf(logfile, msg);  // BUG!
+}
+
+// Attacker supplies: "User %08x %08x %08x %08x %n"
+// Reads stack values and writes to memory
+// CVE-2000-0844, CVE-2001-0660, etc.
+// (Hackers get creative when you give them a printf to play with)
+
+// SAFE versions:
+void safe_logger(const char* msg) {
+    fprintf(logfile, "%s", msg);
+}
+
+void safe_logger_formatted(const char* fmt, ...) {
+    // You control format string - safe
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(logfile, fmt, args);
+    va_end(args);
+}
+\end{lstlisting}
+
+\section{String Builder Pattern}
+
+\begin{lstlisting}
+typedef struct {
+    char* buffer;
+    size_t length;      // Current string length (excluding null)
+    size_t capacity;    // Total buffer size
+} StringBuilder;
+
+StringBuilder* sb_create(size_t initial_capacity) {
+    if (initial_capacity == 0) {
+        initial_capacity = 64;  // Default
+    }
+
+    StringBuilder* sb = malloc(sizeof(StringBuilder));
+    if (!sb) return NULL;
+
+    sb->buffer = malloc(initial_capacity);
+    if (!sb->buffer) {
+        free(sb);
+        return NULL;
+    }
+
+    sb->length = 0;
+    sb->capacity = initial_capacity;
+    sb->buffer[0] = '\0';
+
+    return sb;
+}
+
+// Grow buffer to at least new_capacity
+static int sb_grow(StringBuilder* sb, size_t new_capacity) {
+    if (new_capacity <= sb->capacity) {
+        return 0;  // Already large enough
+    }
+
+    // Grow by 1.5x or to new_capacity, whichever is larger
+    size_t grow = sb->capacity + sb->capacity / 2;
+    if (grow < new_capacity) {
+        grow = new_capacity;
+    }
+
+    char* new_buf = realloc(sb->buffer, grow);
+    if (!new_buf) return -1;
+
+    sb->buffer = new_buf;
+    sb->capacity = grow;
+    return 0;
+}
+
+int sb_append(StringBuilder* sb, const char* str) {
+    if (!sb || !str) return -1;
+
+    size_t str_len = strlen(str);
+    size_t needed = sb->length + str_len + 1;  // +1 for null
+
+    if (needed > sb->capacity) {
+        if (sb_grow(sb, needed) != 0) {
+            return -1;
+        }
+    }
+
+    // memcpy is faster than strcpy for known length
+    memcpy(sb->buffer + sb->length, str, str_len + 1);
+    sb->length += str_len;
+
+    return 0;
+}
+
+int sb_append_char(StringBuilder* sb, char c) {
+    if (!sb) return -1;
+
+    if (sb->length + 2 > sb->capacity) {  // +2 for char and null
+        if (sb_grow(sb, sb->length + 2) != 0) {
+            return -1;
+        }
+    }
+
+    sb->buffer[sb->length++] = c;
+    sb->buffer[sb->length] = '\0';
+
+    return 0;
+}
+
+int sb_append_format(StringBuilder* sb, const char* fmt, ...) {
+    if (!sb || !fmt) return -1;
+
+    va_list args;
+    va_start(args, fmt);
+
+    // Calculate needed size
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int needed = vsnprintf(NULL, 0, fmt, args_copy);
+    va_end(args_copy);
+
+    if (needed < 0) {
+        va_end(args);
+        return -1;
+    }
+
+    // Ensure capacity
+    if (sb->length + needed + 1 > sb->capacity) {
+        if (sb_grow(sb, sb->length + needed + 1) != 0) {
+            va_end(args);
+            return -1;
+        }
+    }
+
+    // Write formatted string
+    vsnprintf(sb->buffer + sb->length, needed + 1, fmt, args);
+    sb->length += needed;
+    va_end(args);
+
+    return 0;
+}
+
+void sb_clear(StringBuilder* sb) {
+    if (sb) {
+        sb->length = 0;
+        if (sb->buffer) {
+            sb->buffer[0] = '\0';
+        }
+    }
+}
+
+char* sb_to_string(StringBuilder* sb) {
+    if (!sb || !sb->buffer) return NULL;
+    return strdup(sb->buffer);  // Caller must free
+}
+
+void sb_destroy(StringBuilder* sb) {
+    if (sb) {
+        free(sb->buffer);
+        free(sb);
+    }
+}
+
+// Usage example
+void demo_string_builder(void) {
+    StringBuilder* sb = sb_create(16);
+
+    sb_append(sb, "Hello, ");
+    sb_append(sb, "World");
+    sb_append_char(sb, '!');
+    sb_append_format(sb, " Number: %d", 42);
+
+    printf("%s\n", sb->buffer);  // "Hello, World! Number: 42"
+
+    // Efficient for building large strings
+    for (int i = 0; i < 1000; i++) {
+        sb_append_format(sb, " %d", i);
+    }
+
+    char* result = sb_to_string(sb);
+    sb_destroy(sb);
+
+    // Use result...
+    free(result);
+}
+\end{lstlisting}
+
+\section{Const Correctness for Strings}
+
+\begin{lstlisting}
+// Use const for strings you won't modify
+void print_string(const char* str) {
+    if (!str) return;
+    printf("%s\n", str);
+    // str[0] = 'X';  // Won't compile - str is const
+}
+
+// Non-const for strings you will modify
+void uppercase_string(char* str) {
+    if (!str) return;
+    for (int i = 0; str[i]; i++) {
+        str[i] = toupper((unsigned char)str[i]);
+    }
+}
+
+// Return const for string literals
+const char* get_error_message(int code) {
+    switch (code) {
+        case 0: return "Success";
+        case 1: return "Error";
+        case 2: return "Fatal error";
+        default: return "Unknown error";
+    }
+    // All returns are string literals - const is correct
+}
+
+// Common mistake: discarding const
+void bad_example(void) {
+    const char* msg = "Hello";
+    char* ptr = (char*)msg;  // Cast away const - BAD!
+    ptr[0] = 'h';            // Undefined behavior! May crash
+}
+
+// Correct pattern: const input, non-const output
+char* string_duplicate_upper(const char* src) {
+    if (!src) return NULL;
+
+    size_t len = strlen(src);
+    char* dst = malloc(len + 1);
+    if (!dst) return NULL;
+
+    for (size_t i = 0; i <= len; i++) {
+        dst[i] = toupper((unsigned char)src[i]);
+    }
+
+    return dst;  // Caller can modify returned string
+}
+\end{lstlisting}
+
+\begin{tipbox}
+Using \texttt{const} correctly helps catch bugs at compile time. If you try to modify a \texttt{const char*}, the compiler will warn you. This prevents accidentally modifying string literals, which is undefined behavior.
+\end{tipbox}
+
+\section{String Tokenization}
+
+\begin{lstlisting}
+// Using strtok (modifies original string - NOT THREAD-SAFE)
+void demo_strtok(void) {
+    char str[] = "apple,banana,cherry";  // Must be mutable
+    char* token = strtok(str, ",");
+    while (token != NULL) {
+        printf("%s\n", token);
+        token = strtok(NULL, ",");  // NULL continues previous
+    }
+    // str is now destroyed: "apple\0banana\0cherry"
+}
+
+// Better: strtok_r (reentrant, thread-safe)
+void demo_strtok_r(void) {
+    char str[] = "apple,banana,cherry";
+    char* saveptr;  // Keeps state between calls
+    char* token = strtok_r(str, ",", &saveptr);
+    while (token != NULL) {
+        printf("%s\n", token);
+        token = strtok_r(NULL, ",", &saveptr);
+    }
+}
+
+// Nested tokenization with strtok_r
+void parse_csv(const char* data) {
+    char* data_copy = strdup(data);
+    char* line_save;
+    char* line = strtok_r(data_copy, "\n", &line_save);
+
+    while (line) {
+        char* field_save;
+        char* field = strtok_r(line, ",", &field_save);
+
+        while (field) {
+            printf("Field: %s\n", field);
+            field = strtok_r(NULL, ",", &field_save);
+        }
+
+        line = strtok_r(NULL, "\n", &line_save);
+    }
+
+    free(data_copy);
+}
+
+// Custom tokenizer (non-destructive)
+typedef struct {
+    const char* start;
+    const char* end;
+} StringView;
+
+int next_token(const char** str, const char* delim, StringView* token) {
+    if (!str || !*str || !delim || !token) return 0;
+
+    // Skip leading delimiters
+    while (**str && strchr(delim, **str)) {
+        (*str)++;
+    }
+
+    if (!**str) return 0;  // End of string
+
+    token->start = *str;
+
+    // Find end of token
+    while (**str && !strchr(delim, **str)) {
+        (*str)++;
+    }
+
+    token->end = *str;
+    return 1;
+}
+
+// Usage - doesn't modify original
+void demo_string_view(void) {
+    const char* str = "apple,banana,cherry";
+    StringView token;
+
+    while (next_token(&str, ",", &token)) {
+        printf("%.*s\n", (int)(token.end - token.start), token.start);
+    }
+    // Original string unchanged!
+}
+\end{lstlisting}
+
+\section{String Comparison Patterns}
+
+\begin{lstlisting}
+// Basic comparison
+int compare_strings(const char* s1, const char* s2) {
+    if (!s1 && !s2) return 0;   // Both NULL - equal
+    if (!s1) return -1;          // s1 NULL - less
+    if (!s2) return 1;           // s2 NULL - greater
+
+    return strcmp(s1, s2);
+}
+
+// strcmp returns:
+// < 0 if s1 < s2
+// = 0 if s1 == s2
+// > 0 if s1 > s2
+
+// WRONG way to use strcmp:
+if (strcmp(s1, s2)) {  // BAD! Works but confusing
+    // Not equal
+}
+
+// CORRECT and clear:
+if (strcmp(s1, s2) == 0) {  // Equal
+    // Strings match
+}
+
+// Case-insensitive (POSIX)
+#include <strings.h>  // Note: strings.h, not string.h!
+if (strcasecmp(s1, s2) == 0) {
+    // Equal ignoring case
+}
+
+// Windows equivalent:
+#ifdef _WIN32
+    if (_stricmp(s1, s2) == 0) {
+        // Equal ignoring case
+    }
+#endif
+
+// Prefix check
+if (strncmp(s1, s2, n) == 0) {
+    // First n characters match
+}
+
+// Check if string starts with prefix
+int starts_with(const char* str, const char* prefix) {
+    if (!str || !prefix) return 0;
+    size_t prefix_len = strlen(prefix);
+    return strncmp(str, prefix, prefix_len) == 0;
+}
+
+// Check if string ends with suffix
+int ends_with(const char* str, const char* suffix) {
+    if (!str || !suffix) return 0;
+    size_t str_len = strlen(str);
+    size_t suffix_len = strlen(suffix);
+    if (suffix_len > str_len) return 0;
+    return strcmp(str + str_len - suffix_len, suffix) == 0;
+}
+
+// Contains check
+if (strstr(haystack, needle) != NULL) {
+    // haystack contains needle
+}
+
+// Find position
+const char* pos = strstr(haystack, needle);
+if (pos) {
+    ptrdiff_t index = pos - haystack;
+    printf("Found at index %td\n", index);
+}
+\end{lstlisting}
+
+\section{String to Number Conversion}
+
+\begin{lstlisting}
+#include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
+
+// WRONG - no error checking
+int value = atoi(str);  // Returns 0 on error AND for "0"!
+
+// CORRECT - use strtol with error checking
+int safe_atoi(const char* str, int* out) {
+    if (!str || !out) return -1;
+
+    // Skip leading whitespace
+    while (isspace((unsigned char)*str)) str++;
+
+    if (*str == '\0') return -1;  // Empty string
+
+    char* endptr;
+    errno = 0;
+    long val = strtol(str, &endptr, 10);
+
+    // Check for errors
+    if (errno == ERANGE) {
+        return -1;  // Overflow/underflow
+    }
+    if (endptr == str) {
+        return -1;  // No conversion performed
+    }
+    if (*endptr != '\0') {
+        return -1;  // Extra characters after number
+    }
+    if (val < INT_MIN || val > INT_MAX) {
+        return -1;  // Out of int range
+    }
+
+    *out = (int)val;
+    return 0;
+}
+
+// Parse with different bases
+long hex_value;
+char* end;
+hex_value = strtol("0xFF", &end, 16);  // Hexadecimal
+hex_value = strtol("0377", &end, 8);   // Octal
+hex_value = strtol("1010", &end, 2);   // Binary
+
+// Auto-detect base (0 means auto)
+hex_value = strtol("0xFF", &end, 0);   // Detects hex (0x prefix)
+hex_value = strtol("077", &end, 0);    // Detects octal (0 prefix)
+hex_value = strtol("123", &end, 0);    // Decimal
+
+// Floating point
+double parse_double(const char* str, double* out) {
+    if (!str || !out) return -1;
+
+    char* endptr;
+    errno = 0;
+    double val = strtod(str, &endptr);
+
+    if (errno == ERANGE) {
+        return -1;  // Overflow/underflow
+    }
+    if (endptr == str) {
+        return -1;  // No conversion
+    }
+
+    *out = val;
+    return 0;
+}
+
+// Usage
+int value;
+if (safe_atoi("123", &value) == 0) {
+    printf("Parsed: %d\n", value);
+} else {
+    printf("Parse error\n");
+}
+
+double d;
+if (parse_double("3.14159", &d) == 0) {
+    printf("Parsed: %f\n", d);
+}
+\end{lstlisting}
+
+\section{String Searching and Manipulation}
+
+\begin{lstlisting}
+// Find character
+char* pos = strchr(str, 'x');      // First occurrence
+char* pos = strrchr(str, 'x');     // Last occurrence
+
+if (pos) {
+    *pos = '\0';  // Truncate at first 'x'
+}
+
+// Find any of multiple characters
+char* pos = strpbrk(str, "abc");  // First of 'a', 'b', or 'c'
+
+// Count characters not in set
+size_t n = strcspn(str, " \t\n");  // Length until whitespace
+
+// Count characters in set
+size_t n = strspn(str, "0123456789");  // Length of numeric prefix
+
+// Find substring
+char* pos = strstr(haystack, needle);
+
+// Case-insensitive search (custom implementation)
+char* stristr(const char* haystack, const char* needle) {
+    if (!haystack || !needle) return NULL;
+
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) return (char*)haystack;
+
+    for (; *haystack; haystack++) {
+        if (strncasecmp(haystack, needle, needle_len) == 0) {
+            return (char*)haystack;
+        }
+    }
+    return NULL;
+}
+
+// Replace all occurrences
+char* str_replace_all(const char* str, const char* old, const char* new) {
+    if (!str || !old || !new) return NULL;
+
+    size_t old_len = strlen(old);
+    size_t new_len = strlen(new);
+
+    // Count occurrences
+    int count = 0;
+    const char* p = str;
+    while ((p = strstr(p, old)) != NULL) {
+        count++;
+        p += old_len;
+    }
+
+    if (count == 0) return strdup(str);
+
+    // Allocate new string
+    size_t result_len = strlen(str) + count * (new_len - old_len);
+    char* result = malloc(result_len + 1);
+    if (!result) return NULL;
+
+    // Copy with replacements
+    char* dst = result;
+    const char* src = str;
+    while (*src) {
+        const char* found = strstr(src, old);
+        if (found) {
+            size_t prefix_len = found - src;
+            memcpy(dst, src, prefix_len);
+            dst += prefix_len;
+            memcpy(dst, new, new_len);
+            dst += new_len;
+            src = found + old_len;
+        } else {
+            strcpy(dst, src);
+            break;
+        }
+    }
+
+    return result;
+}
+\end{lstlisting}
+
+\section{String Trimming}
+
+\begin{lstlisting}
+#include <ctype.h>
+
+// Trim whitespace from start and end (in-place)
+void str_trim(char* str) {
+    if (!str) return;
+
+    // Trim leading whitespace
+    char* start = str;
+    while (*start && isspace((unsigned char)*start)) {
+        start++;
+    }
+
+    // If all whitespace, make empty
+    if (*start == '\0') {
+        str[0] = '\0';
+        return;
+    }
+
+    // Trim trailing whitespace
+    char* end = start + strlen(start) - 1;
+    while (end > start && isspace((unsigned char)*end)) {
+        end--;
+    }
+    end[1] = '\0';
+
+    // Move trimmed string to beginning
+    if (start != str) {
+        memmove(str, start, end - start + 2);  // +2 for char and null
+    }
+}
+
+// Non-destructive trim (returns view)
+StringView str_trim_view(const char* str) {
+    StringView view = {NULL, NULL};
+    if (!str) return view;
+
+    // Skip leading whitespace
+    while (*str && isspace((unsigned char)*str)) {
+        str++;
+    }
+    view.start = str;
+
+    // Find end (last non-whitespace)
+    const char* end = str;
+    const char* last_non_space = str - 1;
+
+    while (*end) {
+        if (!isspace((unsigned char)*end)) {
+            last_non_space = end;
+        }
+        end++;
+    }
+
+    view.end = last_non_space + 1;
+    return view;
+}
+
+// Usage
+char str[] = "  Hello World  ";
+str_trim(str);
+printf("'%s'\n", str);  // 'Hello World'
+\end{lstlisting}
+
+\section{Unicode and UTF-8}
+
+\begin{lstlisting}
+// C strings are byte arrays - encoding-agnostic
+// UTF-8 is backwards-compatible with ASCII
+// Multi-byte characters are common in modern applications
+
+// ASCII:  1 byte per character, values 0-127
+// Latin1: 1 byte per character, values 0-255
+// UTF-8:  1-4 bytes per character, variable-width encoding
+
+// UTF-8 encoding:
+// 0xxxxxxx                           1 byte  (ASCII)
+// 110xxxxx 10xxxxxx                  2 bytes
+// 1110xxxx 10xxxxxx 10xxxxxx         3 bytes
+// 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx 4 bytes
+
+// Example: "Hello World" in UTF-8 with Chinese characters
+// 'H'     'e'     'l'     'l'     'o'     ' '
+// 0x48    0x65    0x6C    0x6C    0x6F    0x20
+// Chinese 'shi4' (U+4E16)   Chinese 'jie4' (U+754C)
+// 0xE4 0xB8 0x96             0xE7 0x95 0x8C
+
+const char* utf8_str = "Hello World";  // Imagine Chinese chars here
+// strlen(utf8_str) = 13 bytes (not 8 characters!)
+
+// Count UTF-8 characters (not bytes)
+size_t utf8_strlen(const char* str) {
+    size_t count = 0;
+    while (*str) {
+        if ((*str & 0xC0) != 0x80) {  // Not a continuation byte
+            count++;
+        }
+        str++;
+    }
+    return count;
+}
+
+// Validate UTF-8
+int is_valid_utf8(const char* str) {
+    while (*str) {
+        unsigned char c = *str;
+
+        if (c <= 0x7F) {  // 1-byte (ASCII)
+            str++;
+        } else if ((c & 0xE0) == 0xC0) {  // 2-byte
+            if ((str[1] & 0xC0) != 0x80) return 0;
+            str += 2;
+        } else if ((c & 0xF0) == 0xE0) {  // 3-byte
+            if ((str[1] & 0xC0) != 0x80) return 0;
+            if ((str[2] & 0xC0) != 0x80) return 0;
+            str += 3;
+        } else if ((c & 0xF8) == 0xF0) {  // 4-byte
+            if ((str[1] & 0xC0) != 0x80) return 0;
+            if ((str[2] & 0xC0) != 0x80) return 0;
+            if ((str[3] & 0xC0) != 0x80) return 0;
+            str += 4;
+        } else {
+            return 0;  // Invalid UTF-8
+        }
+    }
+    return 1;
+}
+
+// Decode UTF-8 character
+int utf8_decode(const char* str, uint32_t* out) {
+    unsigned char c = *str;
+
+    if (c <= 0x7F) {
+        *out = c;
+        return 1;
+    } else if ((c & 0xE0) == 0xC0) {
+        *out = ((c & 0x1F) << 6) | (str[1] & 0x3F);
+        return 2;
+    } else if ((c & 0xF0) == 0xE0) {
+        *out = ((c & 0x0F) << 12) | ((str[1] & 0x3F) << 6) | (str[2] & 0x3F);
+        return 3;
+    } else if ((c & 0xF8) == 0xF0) {
+        *out = ((c & 0x07) << 18) | ((str[1] & 0x3F) << 12) |
+               ((str[2] & 0x3F) << 6) | (str[3] & 0x3F);
+        return 4;
+    }
+    return -1;  // Invalid
+}
+
+// IMPORTANT: Many C string functions don't work correctly with UTF-8
+// strlen() counts bytes, not characters (surprise!)
+// toupper()/tolower() only work for ASCII (sorry, rest of world)
+// strchr() works (searching for ASCII in UTF-8 is safe)
+// strstr() works (substring search is byte-based)
+// Welcome to internationalization fun times
+
+// For proper UTF-8 handling, use a library:
+// - ICU (International Components for Unicode)
+// - libunistring
+// - utf8proc
+\end{lstlisting}
+
+\section{Common String Bugs in Production}
+
+\begin{lstlisting}
+// Bug 1: Off-by-one errors
+char buf[5];
+strncpy(buf, "hello", 5);  // WRONG! No space for null
+// Correct:
+char buf[6];
+strncpy(buf, "hello", sizeof(buf) - 1);
+buf[sizeof(buf) - 1] = '\0';
+
+// Bug 2: Returning stack addresses
+char* create_greeting(void) {
+    char buf[100];
+    strcpy(buf, "Hello");
+    return buf;  // BUG! buf is destroyed on return
+}
+// Fix: use malloc or static
+// This is the "give them directions to a demolished building" bug
+
+// Bug 3: Modifying string literals
+char* str = "Hello";
+str[0] = 'h';  // CRASH! Writing to read-only memory
+// Fix: use char str[] = "Hello";
+
+// Bug 4: Not checking for NULL
+void print(const char* str) {
+    printf("%s\n", str);  // CRASH if str is NULL
+}
+// Fix: if (!str) return;
+// Optimist: "The caller will never pass NULL"
+// Pessimist: "The caller WILL pass NULL"
+// C programmer: "When, not if"
+
+// Bug 5: Mixing signed/unsigned char
+char c = 200;  // Negative on systems where char is signed
+if (isspace(c)) { ... }  // BUG! Must cast to unsigned char
+// Correct:
+if (isspace((unsigned char)c)) { ... }
+
+// Bug 6: Assuming ASCII
+// strlen() works for UTF-8 (counts bytes)
+// But character count != byte count
+
+// Bug 7: Race conditions with strtok
+// strtok uses static state - not thread-safe
+// Use strtok_r instead
+
+// Bug 8: Integer overflow in size calculation
+size_t len = strlen(str);
+char* buf = malloc(len + 1);  // What if len == SIZE_MAX?
+// Check: if (len == SIZE_MAX) return NULL;
+\end{lstlisting}
+
+\section{Summary}
+
+String handling in C requires extreme discipline:
+
+\begin{itemize}
+    \item Always allocate \texttt{strlen(s) + 1} bytes for the null terminator
+    \item Use bounded functions (\texttt{strncpy}, \texttt{strncat}, \texttt{snprintf})
+    \item Manually null-terminate after \texttt{strncpy}
+    \item Never use \texttt{gets()} - use \texttt{fgets()} or \texttt{getline()}
+    \item Never pass user input directly to \texttt{printf()} family
+    \item Use \texttt{const} for read-only strings
+    \item Check for NULL before using strings
+    \item Prefer \texttt{strtol} over \texttt{atoi} for conversions
+    \item Use \texttt{strtok\_r} instead of \texttt{strtok} for thread safety
+    \item Remember UTF-8 is multi-byte - byte count != character count
+    \item Validate all input strings for length and content
+    \item Use string builders for efficient concatenation
+    \item Cast to \texttt{unsigned char} when using \texttt{ctype.h} functions
+\end{itemize}
+
+Security implications:
+
+\begin{itemize}
+    \item Buffer overflows are the \#1 source of vulnerabilities
+    \item Format string bugs can leak memory or execute code
+    \item SQL injection stems from improper string escaping
+    \item Path traversal attacks use string manipulation
+    \item Every major CVE in C code involves strings
+\end{itemize}
+
+Master these patterns, and string bugs will become rare in your code. But remember: C strings are dangerous by design. One missing byte, one forgotten null terminator, and your program crashes or gets exploited. Stay vigilant! (And maybe keep a stress ball handy for when you're debugging string issues at 2 AM.)
+
+\begin{tipbox}
+The Heartbleed vulnerability (CVE-2014-0160) was a string handling bug. A missing bounds check in OpenSSL allowed reading 64KB of memory. This leaked passwords, private keys, and sensitive data from millions of servers. One string bug. Billions of dollars in damage. This is why string handling matters. (Also why security researchers have trust issues with memcpy.)
+\end{tipbox}

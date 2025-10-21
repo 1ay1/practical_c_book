@@ -1,0 +1,742 @@
+\chapter{Preprocessor Directives and Techniques}
+
+\section{Understanding the Preprocessor}
+
+The C preprocessor is a text manipulation tool that runs before compilation. It doesn't understand C syntax—it just processes text based on directives that start with \texttt{\#}.
+
+\begin{lstlisting}
+// The preprocessor flow:
+// 1. source.c --> [Preprocessor] --> expanded.i
+// 2. expanded.i --> [Compiler] --> object.o
+// 3. object.o --> [Linker] --> executable
+
+// See preprocessor output:
+// gcc -E source.c -o expanded.i
+\end{lstlisting}
+
+\begin{tipbox}
+Use \texttt{gcc -E} to see exactly what the preprocessor does to your code. This is invaluable for debugging complex macros and understanding header inclusion.
+\end{tipbox}
+
+\section{Conditional Compilation}
+
+The most fundamental preprocessor feature—compile different code for different scenarios.
+
+\subsection{Basic Conditionals}
+
+\begin{lstlisting}
+// Check if defined
+#ifdef DEBUG
+    printf("Debug: x = %d\n", x);
+#endif
+
+// Check if not defined
+#ifndef NDEBUG
+    assert(x > 0);
+#endif
+
+// Check specific value
+#if MAX_BUFFER_SIZE > 1024
+    // Use optimized algorithm for large buffers
+#else
+    // Use simple algorithm
+#endif
+
+// Logical operators
+#if defined(LINUX) || defined(MACOS)
+    // Unix-like systems
+#elif defined(WINDOWS)
+    // Windows-specific code
+#else
+    #error "Unsupported platform"
+#endif
+\end{lstlisting}
+
+\subsection{Feature Detection}
+
+\begin{lstlisting}
+// Check compiler
+#if defined(__GNUC__)
+    // GCC-specific code
+    #define PACKED __attribute__((packed))
+#elif defined(_MSC_VER)
+    // MSVC-specific code
+    #define PACKED __pragma(pack(push, 1))
+#else
+    #define PACKED
+    #warning "Unknown compiler, packing not supported"
+#endif
+
+// Check C standard version
+#if __STDC_VERSION__ >= 201112L
+    // C11 or later - can use _Generic
+    #define typename(x) _Generic((x), \
+        int: "int", \
+        float: "float", \
+        default: "unknown")
+#else
+    // C99 fallback
+    #define typename(x) "unknown"
+#endif
+
+// Check if specific features available
+#ifdef __STDC_NO_THREADS__
+    #error "C11 threads not available"
+#endif
+\end{lstlisting}
+
+\subsection{Build Configuration}
+
+\begin{lstlisting}
+// Debug vs Release
+#ifdef NDEBUG
+    #define DEBUG_PRINT(...)
+    #define ASSERT(x)
+#else
+    #define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__)
+    #define ASSERT(x) assert(x)
+#endif
+
+// Feature flags
+#ifdef ENABLE_LOGGING
+    #define LOG(level, ...) log_message(level, __VA_ARGS__)
+#else
+    #define LOG(level, ...)
+#endif
+
+#ifdef ENABLE_PROFILING
+    #define PROFILE_START(name) Timer _t_ ## name = timer_start()
+    #define PROFILE_END(name) timer_end(_t_ ## name, #name)
+#else
+    #define PROFILE_START(name)
+    #define PROFILE_END(name)
+#endif
+
+// Usage
+void process_data(void) {
+    PROFILE_START(processing);
+    LOG(INFO, "Starting data processing\n");
+
+    // Do work
+
+    LOG(INFO, "Processing complete\n");
+    PROFILE_END(processing);
+}
+\end{lstlisting}
+
+\section{Macro Definitions}
+
+\subsection{Object-Like Macros}
+
+\begin{lstlisting}
+// Constants
+#define MAX_SIZE 1024
+#define PI 3.14159265359
+#define VERSION "1.2.3"
+
+// Use const instead when possible (type-safe)
+static const int MAX_SIZE = 1024;
+static const double PI = 3.14159265359;
+static const char VERSION[] = "1.2.3";
+
+// Multi-line macros with backslash
+#define INIT_ARRAY \
+    { \
+        1, 2, 3, \
+        4, 5, 6, \
+        7, 8, 9  \
+    }
+
+int arr[] = INIT_ARRAY;
+\end{lstlisting}
+
+\subsection{Function-Like Macros}
+
+\begin{lstlisting}
+// Simple macro
+#define SQUARE(x) ((x) * (x))
+
+// Always parenthesize arguments!
+#define BAD_SQUARE(x) x * x
+int result = BAD_SQUARE(2 + 3);  // Expands to: 2 + 3 * 2 + 3 = 11
+int result = SQUARE(2 + 3);       // Expands to: ((2 + 3) * (2 + 3)) = 25
+
+// Parenthesize the whole expression too
+#define BAD_DOUBLE(x) (x) + (x)
+int result = 10 * BAD_DOUBLE(5);  // 10 * 5 + 5 = 55
+#define GOOD_DOUBLE(x) ((x) + (x))
+int result = 10 * GOOD_DOUBLE(5); // 10 * (5 + 5) = 100
+
+// Multiple arguments
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define CLAMP(x, low, high) (MIN(MAX(x, low), high))
+\end{lstlisting}
+
+\begin{warningbox}
+Function-like macros evaluate arguments multiple times! \texttt{MAX(x++, y++)} will increment variables multiple times, leading to bugs.
+\end{warningbox}
+
+\subsection{Do-While(0) Trick}
+
+\begin{lstlisting}
+// Problem: Multi-statement macro
+#define LOG_ERROR(msg) \
+    fprintf(stderr, "ERROR: %s\n", msg); \
+    error_count++
+
+// Breaks with if-statement:
+if (failed)
+    LOG_ERROR("Operation failed");  // Only fprintf is in if!
+// error_count++ always executes!
+
+// Solution: do-while(0)
+#define LOG_ERROR(msg) \
+    do { \
+        fprintf(stderr, "ERROR: %s\n", msg); \
+        error_count++; \
+    } while(0)
+
+// Now works correctly
+if (failed)
+    LOG_ERROR("Operation failed");  // Both statements in block
+
+// Why while(0)? Requires semicolon at call site
+LOG_ERROR("test");  // Must have semicolon, looks like function call
+\end{lstlisting}
+
+\subsection{Variadic Macros}
+
+\begin{lstlisting}
+// C99 variadic macros
+#define DEBUG_PRINT(fmt, ...) \
+    fprintf(stderr, "[%s:%d] " fmt, __FILE__, __LINE__, __VA_ARGS__)
+
+DEBUG_PRINT("Value is %d\n", x);
+// Expands to:
+// fprintf(stderr, "[%s:%d] Value is %d\n", "main.c", 42, x);
+
+// Problem: requires at least one argument
+DEBUG_PRINT("Hello\n");  // ERROR: missing arguments
+
+// Solution: GNU extension
+#define DEBUG_PRINT(fmt, ...) \
+    fprintf(stderr, "[%s:%d] " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
+
+DEBUG_PRINT("Hello\n");  // Works! ## removes comma if __VA_ARGS__ empty
+
+// C++20 and later: __VA_OPT__
+#define DEBUG_PRINT(fmt, ...) \
+    fprintf(stderr, "[%s:%d] " fmt, \
+        __FILE__, __LINE__ __VA_OPT__(,) __VA_ARGS__)
+\end{lstlisting}
+
+\section{Stringification and Token Pasting}
+
+\subsection{Stringification (\#)}
+
+\begin{lstlisting}
+// Convert macro argument to string
+#define STRINGIFY(x) #x
+#define TO_STRING(x) STRINGIFY(x)
+
+// Usage
+printf("%s\n", STRINGIFY(hello));     // "hello"
+printf("%s\n", STRINGIFY(123));       // "123"
+printf("%s\n", STRINGIFY(a + b));     // "a + b"
+
+// Indirect stringification (for macro expansion)
+#define VERSION_MAJOR 1
+#define VERSION_MINOR 2
+
+printf("%s\n", STRINGIFY(VERSION_MAJOR));  // "VERSION_MAJOR" (not expanded!)
+printf("%s\n", TO_STRING(VERSION_MAJOR));  // "1" (expanded!)
+
+// Practical example: variable name debugging
+#define DEBUG_VAR(var) \
+    printf("%s = %d\n", #var, var)
+
+int count = 42;
+DEBUG_VAR(count);  // Prints: count = 42
+\end{lstlisting}
+
+\subsection{Token Pasting (\#\#)}
+
+\begin{lstlisting}
+// Concatenate tokens
+#define CONCAT(a, b) a ## b
+
+// Usage
+int CONCAT(var, 123) = 0;  // Creates: int var123 = 0;
+
+// Generate function names
+#define DEFINE_GETTER(type, name) \
+    type get_ ## name(void) { \
+        return name; \
+    }
+
+int count;
+DEFINE_GETTER(int, count)
+// Expands to:
+// int get_count(void) { return count; }
+
+// Enum to string converter
+#define ENUM_CASE(name) case name: return #name
+
+const char* error_to_string(ErrorCode err) {
+    switch(err) {
+        ENUM_CASE(SUCCESS);
+        ENUM_CASE(ERR_INVALID);
+        ENUM_CASE(ERR_MEMORY);
+        ENUM_CASE(ERR_IO);
+        default: return "UNKNOWN";
+    }
+}
+\end{lstlisting}
+
+\subsection{Advanced Token Manipulation}
+
+\begin{lstlisting}
+// X-Macros: Define list once, use multiple times
+#define ERROR_LIST \
+    X(SUCCESS,     0, "Success") \
+    X(ERR_INVALID, 1, "Invalid argument") \
+    X(ERR_MEMORY,  2, "Out of memory") \
+    X(ERR_IO,      3, "I/O error")
+
+// Generate enum
+typedef enum {
+#define X(name, code, desc) name = code,
+    ERROR_LIST
+#undef X
+} ErrorCode;
+
+// Generate string table
+static const char* error_strings[] = {
+#define X(name, code, desc) [code] = desc,
+    ERROR_LIST
+#undef X
+};
+
+// Generate conversion function
+const char* error_to_string(ErrorCode err) {
+    if (err >= 0 && err < sizeof(error_strings)/sizeof(error_strings[0]))
+        return error_strings[err];
+    return "Unknown error";
+}
+\end{lstlisting}
+
+\section{Predefined Macros}
+
+\subsection{Standard Predefined Macros}
+
+\begin{lstlisting}
+// File and line information
+printf("Error at %s:%d\n", __FILE__, __LINE__);
+
+// Function name (C99)
+void my_function(void) {
+    printf("In function: %s\n", __func__);
+}
+
+// Date and time of compilation
+printf("Compiled on %s at %s\n", __DATE__, __TIME__);
+
+// C standard version
+#if __STDC_VERSION__ >= 201112L
+    printf("Using C11 or later\n");
+#elif __STDC_VERSION__ >= 199901L
+    printf("Using C99\n");
+#else
+    printf("Using C90 or earlier\n");
+#endif
+
+// Practical logging macro
+#define LOG(level, fmt, ...) \
+    do { \
+        fprintf(stderr, "[%s] %s:%d:%s(): " fmt "\n", \
+            level, __FILE__, __LINE__, __func__, ##__VA_ARGS__); \
+    } while(0)
+
+LOG("ERROR", "Failed to open file: %s", filename);
+// Output: [ERROR] main.c:42:process_file(): Failed to open file: data.txt
+\end{lstlisting}
+
+\subsection{Compiler-Specific Macros}
+
+\begin{lstlisting}
+// Detect compiler
+#if defined(__GNUC__)
+    const char* compiler = "GCC";
+    int version = __GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__;
+#elif defined(__clang__)
+    const char* compiler = "Clang";
+    int version = __clang_major__ * 10000 + __clang_minor__ * 100;
+#elif defined(_MSC_VER)
+    const char* compiler = "MSVC";
+    int version = _MSC_VER;
+#else
+    const char* compiler = "Unknown";
+    int version = 0;
+#endif
+
+// Detect platform
+#if defined(_WIN32) || defined(_WIN64)
+    #define PLATFORM "Windows"
+#elif defined(__linux__)
+    #define PLATFORM "Linux"
+#elif defined(__APPLE__) && defined(__MACH__)
+    #define PLATFORM "macOS"
+#elif defined(__unix__)
+    #define PLATFORM "Unix"
+#else
+    #define PLATFORM "Unknown"
+#endif
+
+// Detect architecture
+#if defined(__x86_64__) || defined(_M_X64)
+    #define ARCH "x86_64"
+#elif defined(__i386__) || defined(_M_IX86)
+    #define ARCH "x86"
+#elif defined(__aarch64__) || defined(_M_ARM64)
+    #define ARCH "ARM64"
+#elif defined(__arm__) || defined(_M_ARM)
+    #define ARCH "ARM"
+#else
+    #define ARCH "Unknown"
+#endif
+\end{lstlisting}
+
+\section{Include Directives}
+
+\subsection{Include Paths}
+
+\begin{lstlisting}
+// System headers (search in system directories)
+#include <stdio.h>
+#include <stdlib.h>
+
+// Local headers (search in current directory first)
+#include "myheader.h"
+#include "utils/helper.h"
+
+// Absolute path (not recommended)
+#include "/usr/local/include/mylib.h"
+
+// Computed includes (rare, avoid)
+#define HEADER_NAME "config.h"
+#include HEADER_NAME
+\end{lstlisting}
+
+\subsection{Conditional Includes}
+
+\begin{lstlisting}
+// Include based on platform
+#ifdef _WIN32
+    #include <windows.h>
+#else
+    #include <unistd.h>
+    #include <pthread.h>
+#endif
+
+// Include optional dependencies
+#ifdef HAVE_OPENSSL
+    #include <openssl/ssl.h>
+#endif
+
+// Version-specific includes
+#if MYLIB_VERSION >= 20000
+    #include "mylib/v2/api.h"
+#else
+    #include "mylib/v1/api.h"
+#endif
+\end{lstlisting}
+
+\section{Advanced Preprocessor Techniques}
+
+\subsection{Macro Overloading by Argument Count}
+
+\begin{lstlisting}
+// Count arguments (up to 5 for this example)
+#define GET_MACRO(_1, _2, _3, _4, _5, NAME, ...) NAME
+
+// Define overloaded versions
+#define PRINT_1(a)           printf("%d\n", a)
+#define PRINT_2(a, b)        printf("%d %d\n", a, b)
+#define PRINT_3(a, b, c)     printf("%d %d %d\n", a, b, c)
+#define PRINT_4(a, b, c, d)  printf("%d %d %d %d\n", a, b, c, d)
+#define PRINT_5(a, b, c, d, e) printf("%d %d %d %d %d\n", a, b, c, d, e)
+
+// Dispatch to correct version
+#define PRINT(...) \
+    GET_MACRO(__VA_ARGS__, PRINT_5, PRINT_4, PRINT_3, PRINT_2, PRINT_1)(__VA_ARGS__)
+
+// Usage
+PRINT(1);           // Calls PRINT_1
+PRINT(1, 2);        // Calls PRINT_2
+PRINT(1, 2, 3);     // Calls PRINT_3
+\end{lstlisting}
+
+\subsection{Compile-Time Assertions}
+
+\begin{lstlisting}
+// C11 static_assert
+_Static_assert(sizeof(int) == 4, "int must be 4 bytes");
+
+// Pre-C11 compile-time assert
+#define STATIC_ASSERT(cond, msg) \
+    typedef char static_assertion_##msg[(cond) ? 1 : -1]
+
+STATIC_ASSERT(sizeof(int) == 4, int_size_check);
+
+// Negative array size causes compile error if condition false
+
+// Check at compile time
+STATIC_ASSERT(MAX_BUFFER >= 1024, buffer_too_small);
+STATIC_ASSERT(sizeof(MyStruct) == 64, wrong_struct_size);
+\end{lstlisting}
+
+\subsection{Defer Macro Expansion}
+
+\begin{lstlisting}
+// Sometimes you need to control when macros expand
+#define EMPTY()
+#define DEFER(id) id EMPTY()
+
+#define A() 123
+DEFER(A)()  // Defers expansion of A
+
+// Recursive macro (limited depth)
+#define REPEAT_0(m, x)
+#define REPEAT_1(m, x) m(x)
+#define REPEAT_2(m, x) m(x) REPEAT_1(m, x)
+#define REPEAT_3(m, x) m(x) REPEAT_2(m, x)
+#define REPEAT_4(m, x) m(x) REPEAT_3(m, x)
+
+#define INC(x) x++
+
+REPEAT_4(INC, counter);
+// Expands to: counter++ counter++ counter++ counter++
+\end{lstlisting}
+
+\subsection{Type-Generic Macros}
+
+\begin{lstlisting}
+// C11 _Generic selection
+#define print_any(x) _Generic((x), \
+    int: printf("%d", x), \
+    long: printf("%ld", x), \
+    float: printf("%f", (double)x), \
+    double: printf("%f", x), \
+    char*: printf("%s", x), \
+    default: printf("%p", (void*)&x))
+
+// Usage
+print_any(42);           // Prints int
+print_any(3.14);         // Prints double
+print_any("hello");      // Prints string
+
+// Type-generic absolute value
+#define abs_generic(x) _Generic((x), \
+    int: abs(x), \
+    long: labs(x), \
+    long long: llabs(x), \
+    float: fabsf(x), \
+    double: fabs(x), \
+    long double: fabsl(x))
+\end{lstlisting}
+
+\section{Debugging Macros}
+
+\subsection{Macro Expansion Debugging}
+
+\begin{lstlisting}
+// Show what preprocessor does
+// Compile with: gcc -E source.c
+
+// Add debug prints in macros
+#define DEBUG_MACRO(x) \
+    do { \
+        printf("Macro called with: %s\n", #x); \
+        printf("Value: %d\n", x); \
+    } while(0)
+
+// Trace macro expansion
+#define TRACE_EXPAND(x) TRACE_EXPAND_IMPL(x)
+#define TRACE_EXPAND_IMPL(x) #x
+
+#define VALUE 42
+printf("VALUE expands to: %s\n", TRACE_EXPAND(VALUE));
+// Prints: VALUE expands to: 42
+\end{lstlisting}
+
+\subsection{Assertion Macros}
+
+\begin{lstlisting}
+// Enhanced assert with message
+#define ASSERT_MSG(cond, msg) \
+    do { \
+        if (!(cond)) { \
+            fprintf(stderr, "Assertion failed: %s\n", #cond); \
+            fprintf(stderr, "Message: %s\n", msg); \
+            fprintf(stderr, "File: %s, Line: %d\n", __FILE__, __LINE__); \
+            abort(); \
+        } \
+    } while(0)
+
+// Runtime verification (always enabled)
+#define VERIFY(cond) \
+    do { \
+        if (!(cond)) { \
+            fprintf(stderr, "Verification failed: %s at %s:%d\n", \
+                #cond, __FILE__, __LINE__); \
+            abort(); \
+        } \
+    } while(0)
+
+// Check preconditions
+#define REQUIRE(cond) VERIFY(cond)
+// Check postconditions
+#define ENSURE(cond) VERIFY(cond)
+
+void process(int* data, size_t size) {
+    REQUIRE(data != NULL);
+    REQUIRE(size > 0);
+
+    // Process data
+
+    ENSURE(result >= 0);
+}
+\end{lstlisting}
+
+\section{Macro Pitfalls and Solutions}
+
+\subsection{Common Problems}
+
+\begin{lstlisting}
+// Problem 1: Double evaluation
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+int x = 5;
+int result = MAX(x++, 10);  // x incremented twice!
+
+// Solution: Use inline functions (C99)
+static inline int max_int(int a, int b) {
+    return (a > b) ? a : b;
+}
+
+// Problem 2: Semicolon swallowing
+#define SWAP(a, b) { int tmp = a; a = b; b = tmp; }
+if (x > y)
+    SWAP(x, y);  // Extra semicolon breaks else
+else
+    printf("ok\n");
+
+// Solution: do-while(0)
+#define SWAP(a, b) \
+    do { int tmp = a; a = b; b = tmp; } while(0)
+
+// Problem 3: Macro shadowing
+#define BEGIN {
+#define END }
+// Looks nice but breaks code that uses begin/end variables
+
+// Problem 4: Operator precedence
+#define DOUBLE(x) x + x
+int result = 10 * DOUBLE(5);  // 10 * 5 + 5 = 55, not 100!
+
+// Solution: Always parenthesize
+#define DOUBLE(x) ((x) + (x))
+\end{lstlisting}
+
+\subsection{When NOT to Use Macros}
+
+\begin{lstlisting}
+// BAD: Complex logic in macros
+#define PROCESS_DATA(data, size) \
+    do { \
+        for (int i = 0; i < size; i++) { \
+            if (data[i] < 0) data[i] = 0; \
+            data[i] *= 2; \
+        } \
+    } while(0)
+
+// GOOD: Use a function instead
+static inline void process_data(int* data, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        if (data[i] < 0) data[i] = 0;
+        data[i] *= 2;
+    }
+}
+
+// BAD: Type-unsafe operations
+#define SWAP(a, b) \
+    do { typeof(a) tmp = a; a = b; b = tmp; } while(0)
+// typeof is GNU extension, not standard
+
+// GOOD: Type-safe generic (C11)
+#define swap(a, b) \
+    do { \
+        _Generic((a), \
+            int: swap_int, \
+            double: swap_double)(&(a), &(b)); \
+    } while(0)
+\end{lstlisting}
+
+\section{Preprocessor Best Practices}
+
+\begin{lstlisting}
+// 1. Use UPPERCASE for macros
+#define MAX_SIZE 1024  // Clear it's a macro
+static const int max_size = 1024;  // Clear it's not
+
+// 2. Prefix macros with project name
+#define MYLIB_MAX(a, b) ((a) > (b) ? (a) : (b))
+// Avoids conflicts with other libraries
+
+// 3. Parenthesize everything
+#define BAD(x) x * 2
+#define GOOD(x) ((x) * 2)
+
+// 4. Document complex macros
+/**
+ * FOR_EACH - Iterate over array elements
+ * @type: Element type
+ * @var: Loop variable name
+ * @array: Array to iterate
+ * @count: Number of elements
+ *
+ * Usage:
+ *   FOR_EACH(int, x, array, 10) {
+ *       printf("%d\n", x);
+ *   }
+ */
+#define FOR_EACH(type, var, array, count) \
+    for (type var, *_arr_ = (array), \
+         *_end_ = _arr_ + (count); \
+         _arr_ < _end_ && (var = *_arr_, 1); \
+         _arr_++)
+
+// 5. Undefine temporary macros
+#define X(a, b) a + b
+// Use X
+#undef X  // Clean up namespace
+\end{lstlisting}
+
+\section{Summary}
+
+The preprocessor is a powerful text manipulation tool:
+
+\begin{itemize}
+    \item Use conditional compilation for platform/feature handling
+    \item Always parenthesize macro arguments and expressions
+    \item Use do-while(0) for multi-statement macros
+    \item Beware of double evaluation in function-like macros
+    \item Prefer inline functions for type safety when possible
+    \item Use \texttt{\#} for stringification, \texttt{\#\#} for token pasting
+    \item X-macros reduce code duplication elegantly
+    \item Use predefined macros for debugging and logging
+    \item Document complex macros thoroughly
+    \item Know when NOT to use macros
+\end{itemize}
+
+Master the preprocessor, but use it judiciously. Modern C features like inline functions and \texttt{\_Generic} often provide safer alternatives!

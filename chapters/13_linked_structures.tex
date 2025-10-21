@@ -1,0 +1,1581 @@
+\chapter{Linked Structures}
+
+\section{Beyond Basic Linked Lists}
+
+Most textbooks stop at singly-linked lists with toy examples. Real code uses doubly-linked lists, circular lists, skip lists, and sophisticated pointer manipulation. This chapter covers the linked structures you'll actually encounter in production systems—from the Linux kernel's intrusive lists to Redis's skip lists.
+
+\textbf{The linked structure family tree}:
+
+Linked structures are all about managing relationships between data through pointers. Unlike arrays where elements sit contiguously in memory, linked structures scatter data across the heap and connect the pieces with pointers. This fundamental difference drives everything: the performance characteristics, the memory patterns, the algorithms, and the bugs you'll encounter.
+
+\textbf{Why linked structures?}
+
+\begin{itemize}
+    \item \textbf{Dynamic size}: Grow and shrink without reallocation
+    \item \textbf{Constant-time insertion/deletion}: O(1) at known positions
+    \item \textbf{No contiguous memory}: Work with fragmented memory
+    \item \textbf{Natural recursion}: Many algorithms are naturally recursive
+\end{itemize}
+
+\textbf{Trade-offs}:
+
+\begin{itemize}
+    \item Poor cache locality—each node is a separate allocation
+    \item Memory overhead—pointers take space
+    \item No random access—must traverse from head
+    \item More complex memory management
+\end{itemize}
+
+Understanding these trade-offs helps you choose the right data structure. Arrays beat linked lists for most use cases, but when you need dynamic insertion/deletion at arbitrary positions, linked structures shine.
+
+\section{Singly-Linked List Deep Dive}
+
+The simplest linked structure, but with many subtle details.
+
+\subsection{Robust Implementation}
+
+A truly robust linked list implementation needs more than just next pointers. You need proper memory management, error handling, and utility functions. Let's build a production-quality singly-linked list from scratch.
+
+\textbf{Design decisions}:
+\begin{itemize}
+    \item Store both head and tail for O(1) append (most implementations forget this!)
+    \item Track size for O(1) length queries
+    \item Accept function pointer for custom data cleanup
+    \item Return error codes for allocation failures
+\end{itemize}
+
+\begin{lstlisting}
+typedef struct Node {
+    void* data;
+    struct Node* next;
+} Node;
+
+typedef struct {
+    Node* head;
+    Node* tail;  // Keep tail pointer for O(1) append
+    size_t size;
+
+    // Function pointers for memory management
+    void (*free_data)(void* data);
+} LinkedList;
+
+// Create list
+LinkedList* list_create(void (*free_fn)(void*)) {
+    LinkedList* list = malloc(sizeof(LinkedList));
+    if (!list) return NULL;
+
+    list->head = NULL;
+    list->tail = NULL;
+    list->size = 0;
+    list->free_data = free_fn;
+
+    return list;
+}
+
+// Prepend - O(1)
+int list_prepend(LinkedList* list, void* data) {
+    Node* node = malloc(sizeof(Node));
+    if (!node) return -1;
+
+    node->data = data;
+    node->next = list->head;
+
+    list->head = node;
+
+    // Update tail if this is first element
+    if (!list->tail) {
+        list->tail = node;
+    }
+
+    list->size++;
+    return 0;
+}
+
+// Append - O(1) with tail pointer
+int list_append(LinkedList* list, void* data) {
+    Node* node = malloc(sizeof(Node));
+    if (!node) return -1;
+
+    node->data = data;
+    node->next = NULL;
+
+    if (list->tail) {
+        list->tail->next = node;
+        list->tail = node;
+    } else {
+        // Empty list
+        list->head = list->tail = node;
+    }
+
+    list->size++;
+    return 0;
+}
+
+// Remove first occurrence
+int list_remove(LinkedList* list, const void* data,
+                int (*compare)(const void*, const void*)) {
+    Node* prev = NULL;
+    Node* curr = list->head;
+
+    while (curr) {
+        if (compare(curr->data, data) == 0) {
+            // Found it - unlink
+            if (prev) {
+                prev->next = curr->next;
+            } else {
+                list->head = curr->next;
+            }
+
+            // Update tail if we removed last element
+            if (curr == list->tail) {
+                list->tail = prev;
+            }
+
+            if (list->free_data) {
+                list->free_data(curr->data);
+            }
+            free(curr);
+            list->size--;
+            return 0;
+        }
+
+        prev = curr;
+        curr = curr->next;
+    }
+
+    return -1;  // Not found
+}
+
+// Reverse the list - O(n)
+void list_reverse(LinkedList* list) {
+    Node* prev = NULL;
+    Node* curr = list->head;
+    Node* next = NULL;
+
+    // Swap head and tail
+    list->tail = list->head;
+
+    while (curr) {
+        next = curr->next;
+        curr->next = prev;
+        prev = curr;
+        curr = next;
+    }
+
+    list->head = prev;
+}
+
+// Find middle element (tortoise and hare algorithm)
+Node* list_find_middle(LinkedList* list) {
+    if (!list->head) return NULL;
+
+    Node* slow = list->head;
+    Node* fast = list->head;
+
+    while (fast->next && fast->next->next) {
+        slow = slow->next;
+        fast = fast->next->next;
+    }
+
+    return slow;
+}
+
+// Detect cycle (Floyd's algorithm)
+int list_has_cycle(LinkedList* list) {
+    if (!list->head) return 0;
+
+    Node* slow = list->head;
+    Node* fast = list->head;
+
+    while (fast && fast->next) {
+        slow = slow->next;
+        fast = fast->next->next;
+
+        if (slow == fast) {
+            return 1;  // Cycle detected
+        }
+    }
+
+    return 0;
+}
+
+// Destroy list
+void list_destroy(LinkedList* list) {
+    if (!list) return;
+
+    Node* curr = list->head;
+    while (curr) {
+        Node* next = curr->next;
+        if (list->free_data) {
+            list->free_data(curr->data);
+        }
+        free(curr);
+        curr = next;
+    }
+
+    free(list);
+}
+\end{lstlisting}
+
+\begin{tipbox}
+Always maintain a tail pointer for O(1) append operations. Without it, appending becomes O(n) because you must traverse the entire list. This single optimization makes linked lists practical for many more use cases.
+\end{tipbox}
+
+\section{Doubly-Linked Lists}
+
+Bidirectional traversal and O(1) deletion at any node—the workhorse of many systems.
+
+\textbf{Why doubly-linked lists dominate in practice}:
+
+Singly-linked lists have a fatal flaw: to delete a node, you need the previous node. This means deletion is O(n) unless you already have the previous pointer. Doubly-linked lists solve this by storing both next and prev pointers, enabling O(1) deletion anywhere.
+
+The extra pointer costs memory (8 bytes per node on 64-bit systems), but the algorithmic improvement is worth it. That's why most real systems (databases, operating systems, GUI frameworks) use doubly-linked lists.
+
+\subsection{Linux Kernel Style Doubly-Linked List}
+
+The Linux kernel uses an elegant intrusive list pattern—arguably the most clever linked list design ever created. Instead of the list containing pointers to your data, your data structures embed the list nodes directly. This inverts the normal relationship and provides massive benefits.
+
+\textbf{Why this pattern is revolutionary}:
+\begin{itemize}
+    \item No separate allocation for nodes—eliminates allocation overhead
+    \item One struct can be in multiple lists simultaneously
+    \item Type-agnostic operations—same code works for all types
+    \item Cache-friendly—data and links stored together in memory
+    \item Zero memory overhead beyond the link pointers themselves
+\end{itemize}
+
+This pattern appears in Linux, FreeBSD, GLib, and countless other production systems. Master it.
+
+\begin{lstlisting}
+// The list node - embedded in your structs
+typedef struct list_head {
+    struct list_head* next;
+    struct list_head* prev;
+} list_head;
+
+// Initialize a list head (circular sentinel)
+#define LIST_HEAD_INIT(name) { &(name), &(name) }
+#define LIST_HEAD(name) \
+    list_head name = LIST_HEAD_INIT(name)
+
+static inline void INIT_LIST_HEAD(list_head* list) {
+    list->next = list;
+    list->prev = list;
+}
+
+// Insert between prev and next
+static inline void __list_add(list_head* new_node,
+                              list_head* prev,
+                              list_head* next) {
+    next->prev = new_node;
+    new_node->next = next;
+    new_node->prev = prev;
+    prev->next = new_node;
+}
+
+// Add to front of list
+static inline void list_add(list_head* new_node, list_head* head) {
+    __list_add(new_node, head, head->next);
+}
+
+// Add to end of list
+static inline void list_add_tail(list_head* new_node, list_head* head) {
+    __list_add(new_node, head->prev, head);
+}
+
+// Delete a node
+static inline void __list_del(list_head* prev, list_head* next) {
+    next->prev = prev;
+    prev->next = next;
+}
+
+static inline void list_del(list_head* entry) {
+    __list_del(entry->prev, entry->next);
+    entry->next = NULL;
+    entry->prev = NULL;
+}
+
+// Check if list is empty
+static inline int list_empty(const list_head* head) {
+    return head->next == head;
+}
+
+// Get container struct from list_head pointer
+#define list_entry(ptr, type, member) \
+    container_of(ptr, type, member)
+
+// Iterate over list
+#define list_for_each(pos, head) \
+    for (pos = (head)->next; pos != (head); pos = pos->next)
+
+// Iterate over list safely (allows deletion during iteration)
+#define list_for_each_safe(pos, n, head) \
+    for (pos = (head)->next, n = pos->next; pos != (head); \
+         pos = n, n = pos->next)
+
+// Iterate over entries (structs)
+#define list_for_each_entry(pos, head, member) \
+    for (pos = list_entry((head)->next, typeof(*pos), member); \
+         &pos->member != (head); \
+         pos = list_entry(pos->member.next, typeof(*pos), member))
+\end{lstlisting}
+
+\textbf{Usage example}:
+
+\begin{lstlisting}
+// Your data structure embeds list_head
+typedef struct {
+    int pid;
+    char name[32];
+    int priority;
+    list_head list;  // Embedded list node
+} Task;
+
+// Create list head
+LIST_HEAD(task_list);
+
+// Add tasks
+Task* task1 = malloc(sizeof(Task));
+task1->pid = 1;
+strcpy(task1->name, "init");
+task1->priority = 10;
+INIT_LIST_HEAD(&task1->list);
+list_add(&task1->list, &task_list);
+
+Task* task2 = malloc(sizeof(Task));
+task2->pid = 2;
+strcpy(task2->name, "worker");
+task2->priority = 5;
+INIT_LIST_HEAD(&task2->list);
+list_add_tail(&task2->list, &task_list);
+
+// Iterate over tasks
+list_head* pos;
+list_for_each(pos, &task_list) {
+    Task* t = list_entry(pos, Task, list);
+    printf("Task: %d %s (priority %d)\n",
+           t->pid, t->name, t->priority);
+}
+
+// Safe deletion during iteration
+list_head* pos_safe;
+list_head* n;
+list_for_each_safe(pos_safe, n, &task_list) {
+    Task* t = list_entry(pos_safe, Task, list);
+    if (t->priority < 5) {
+        list_del(&t->list);
+        free(t);
+    }
+}
+\end{lstlisting}
+
+\textbf{Why this pattern is brilliant}:
+
+\begin{itemize}
+    \item No separate node allocation—nodes embedded in your structs
+    \item One struct can be in multiple lists (embed multiple list\_head members)
+    \item Type-agnostic list operations—same code works for all types
+    \item Cache-friendly—data and links stored together
+    \item O(1) deletion when you have the node pointer
+\end{itemize}
+
+\section{Circular Linked Lists}
+
+Lists where the last node points back to the first—useful for round-robin scheduling and ring buffers.
+
+\textbf{What makes circular lists special}:
+
+In a circular list, there's no "end"—you can keep traversing forever. This property is perfect for modeling cyclic processes: round-robin schedulers, circular buffers, token passing protocols, and game turn systems.
+
+The key insight: you don't need separate head and tail pointers. Just maintain a "current" pointer and you can access the entire circle. To traverse the whole list, just stop when you return to your starting point.
+
+\textbf{Practical applications}:
+\begin{itemize}
+    \item \textbf{Round-robin scheduler}: Each process gets CPU time, then move to next
+    \item \textbf{Circular buffer}: Efficient FIFO with wrap-around
+    \item \textbf{Music playlist}: Keep looping through songs
+    \item \textbf{Network token ring}: Pass token around the network
+    \item \textbf{Josephus problem}: Classic algorithmic puzzle
+\end{itemize}
+
+\begin{lstlisting}
+typedef struct Node {
+    void* data;
+    struct Node* next;
+} Node;
+
+typedef struct {
+    Node* current;  // Current position in circle
+    size_t size;
+} CircularList;
+
+// Create circular list
+CircularList* clist_create(void) {
+    CircularList* list = malloc(sizeof(CircularList));
+    if (!list) return NULL;
+
+    list->current = NULL;
+    list->size = 0;
+    return list;
+}
+
+// Insert after current
+int clist_insert(CircularList* list, void* data) {
+    Node* node = malloc(sizeof(Node));
+    if (!node) return -1;
+
+    node->data = data;
+
+    if (!list->current) {
+        // First element - points to itself
+        node->next = node;
+        list->current = node;
+    } else {
+        // Insert after current
+        node->next = list->current->next;
+        list->current->next = node;
+    }
+
+    list->size++;
+    return 0;
+}
+
+// Advance to next element (round-robin)
+void* clist_next(CircularList* list) {
+    if (!list->current) return NULL;
+
+    list->current = list->current->next;
+    return list->current->data;
+}
+
+// Remove current element
+int clist_remove_current(CircularList* list) {
+    if (!list->current) return -1;
+
+    if (list->size == 1) {
+        // Last element
+        free(list->current);
+        list->current = NULL;
+    } else {
+        // Find previous node
+        Node* prev = list->current;
+        while (prev->next != list->current) {
+            prev = prev->next;
+        }
+
+        // Remove current
+        prev->next = list->current->next;
+        Node* to_free = list->current;
+        list->current = list->current->next;
+        free(to_free);
+    }
+
+    list->size--;
+    return 0;
+}
+
+// Josephus problem solver using circular list
+int josephus(int n, int k) {
+    CircularList* list = clist_create();
+
+    // Add n people
+    for (int i = 0; i < n; i++) {
+        int* person = malloc(sizeof(int));
+        *person = i + 1;
+        clist_insert(list, person);
+    }
+
+    // Eliminate every kth person
+    while (list->size > 1) {
+        for (int i = 0; i < k - 1; i++) {
+            clist_next(list);
+        }
+
+        int* eliminated = (int*)list->current->data;
+        printf("Eliminated: %d\n", *eliminated);
+        free(eliminated);
+        clist_remove_current(list);
+    }
+
+    // Return survivor
+    int survivor = *(int*)list->current->data;
+    return survivor;
+}
+\end{lstlisting}
+
+\textbf{Real-world use}: Round-robin schedulers, circular buffers, Josephus problem, token ring networks.
+
+\section{Skip Lists}
+
+Probabilistic data structure providing O(log n) search, insert, and delete—simpler than balanced trees.
+
+\textbf{The genius of skip lists}:
+
+Balanced trees (AVL, Red-Black) guarantee O(log n) operations but require complex rotation algorithms. Skip lists achieve the same performance with a brilliantly simple idea: maintain multiple "express lanes" that skip over elements.
+
+Imagine a linked list where:
+\begin{itemize}
+    \item Level 0: Every element (the full list)
+    \item Level 1: Every other element (skip 1)
+    \item Level 2: Every fourth element (skip 3)
+    \item Level 3: Every eighth element (skip 7)
+\end{itemize}
+
+To search, start at the highest level and move forward until you overshoot, then drop down a level. This gives you binary search performance on a linked structure!
+
+\textbf{How randomness helps}:
+
+Rather than rigidly maintaining perfect skip patterns (which would be complex), we use randomness. When inserting a node, flip a coin to decide how many levels it participates in. On average, this creates the express lane structure we want.
+
+\textbf{Why skip lists are popular}:
+\begin{itemize}
+    \item Much simpler than balanced tree algorithms
+    \item Lock-free implementations are possible (huge for concurrent systems)
+    \item Used in Redis (sorted sets), LevelDB, and many databases
+    \item Expected O(log n) operations with low constant factors
+    \item Easy to understand and debug
+\end{itemize}
+
+\begin{lstlisting}
+#define MAX_LEVEL 16
+#define SKIP_LIST_P 0.5
+
+typedef struct SkipNode {
+    int key;
+    void* value;
+    struct SkipNode* forward[MAX_LEVEL];
+} SkipNode;
+
+typedef struct {
+    int level;
+    SkipNode* header;
+} SkipList;
+
+// Random level generator
+static int random_level(void) {
+    int level = 1;
+    while ((rand() / (double)RAND_MAX) < SKIP_LIST_P &&
+           level < MAX_LEVEL) {
+        level++;
+    }
+    return level;
+}
+
+// Create skip list
+SkipList* skiplist_create(void) {
+    SkipList* list = malloc(sizeof(SkipList));
+    if (!list) return NULL;
+
+    list->level = 1;
+    list->header = malloc(sizeof(SkipNode));
+    if (!list->header) {
+        free(list);
+        return NULL;
+    }
+
+    for (int i = 0; i < MAX_LEVEL; i++) {
+        list->header->forward[i] = NULL;
+    }
+
+    return list;
+}
+
+// Search
+void* skiplist_search(SkipList* list, int key) {
+    SkipNode* curr = list->header;
+
+    // Start from top level, move down
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (curr->forward[i] && curr->forward[i]->key < key) {
+            curr = curr->forward[i];
+        }
+    }
+
+    // Move to next node at level 0
+    curr = curr->forward[0];
+
+    if (curr && curr->key == key) {
+        return curr->value;
+    }
+
+    return NULL;
+}
+
+// Insert
+int skiplist_insert(SkipList* list, int key, void* value) {
+    SkipNode* update[MAX_LEVEL];
+    SkipNode* curr = list->header;
+
+    // Find insert position at each level
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (curr->forward[i] && curr->forward[i]->key < key) {
+            curr = curr->forward[i];
+        }
+        update[i] = curr;
+    }
+
+    curr = curr->forward[0];
+
+    // Key already exists - update value
+    if (curr && curr->key == key) {
+        curr->value = value;
+        return 0;
+    }
+
+    // Create new node with random level
+    int new_level = random_level();
+
+    // Update list level if necessary
+    if (new_level > list->level) {
+        for (int i = list->level; i < new_level; i++) {
+            update[i] = list->header;
+        }
+        list->level = new_level;
+    }
+
+    // Create and insert node
+    SkipNode* node = malloc(sizeof(SkipNode));
+    if (!node) return -1;
+
+    node->key = key;
+    node->value = value;
+
+    for (int i = 0; i < new_level; i++) {
+        node->forward[i] = update[i]->forward[i];
+        update[i]->forward[i] = node;
+    }
+
+    return 0;
+}
+
+// Delete
+int skiplist_delete(SkipList* list, int key) {
+    SkipNode* update[MAX_LEVEL];
+    SkipNode* curr = list->header;
+
+    // Find node at each level
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (curr->forward[i] && curr->forward[i]->key < key) {
+            curr = curr->forward[i];
+        }
+        update[i] = curr;
+    }
+
+    curr = curr->forward[0];
+
+    if (!curr || curr->key != key) {
+        return -1;  // Not found
+    }
+
+    // Remove node from all levels
+    for (int i = 0; i < list->level; i++) {
+        if (update[i]->forward[i] != curr) {
+            break;
+        }
+        update[i]->forward[i] = curr->forward[i];
+    }
+
+    free(curr);
+
+    // Update list level
+    while (list->level > 1 && !list->header->forward[list->level - 1]) {
+        list->level--;
+    }
+
+    return 0;
+}
+\end{lstlisting}
+
+\textbf{Why skip lists?}
+
+\begin{itemize}
+    \item Simpler than balanced trees (AVL, Red-Black)
+    \item O(log n) operations on average
+    \item Lock-free implementations possible (great for concurrent systems)
+    \item Easy to implement and understand
+    \item Used in Redis, LevelDB, and many databases
+\end{itemize}
+
+\section{Memory Pool for Linked Structures}
+
+Allocating one node at a time is slow. Memory pools batch allocations for massive speedup.
+
+\textbf{The malloc problem}:
+
+Every time you insert into a linked list, you call malloc(). Every deletion calls free(). For small objects like list nodes (16-32 bytes), this overhead dominates:
+\begin{itemize}
+    \item malloc() is slow—must find free block, update metadata, handle alignment
+    \item Memory fragmentation—lots of small allocations fragment the heap
+    \item Cache misses—malloc'd memory scattered across address space
+    \item Allocator contention—in multi-threaded code, malloc() uses locks
+\end{itemize}
+
+\textbf{Memory pool solution}:
+
+Allocate a large block once, then carve out small pieces as needed. When nodes are freed, return them to the pool instead of calling free(). This is 10-100x faster than malloc/free for small objects.
+
+\textbf{How the pool works}:
+\begin{enumerate}
+    \item Allocate chunks of N nodes at a time (e.g., 64 nodes)
+    \item Maintain a free list of returned nodes
+    \item On allocation: return from free list, or carve from current chunk
+    \item On free: add node to free list (don't actually free memory)
+    \item On pool destruction: free all chunks at once
+\end{enumerate}
+
+This is exactly how high-performance allocators like jemalloc work internally. You're building a specialized allocator for one object size.
+
+\begin{lstlisting}
+#define POOL_CHUNK_SIZE 64
+
+typedef struct PoolChunk {
+    void* memory;
+    size_t used;
+    struct PoolChunk* next;
+} PoolChunk;
+
+typedef struct {
+    size_t node_size;
+    PoolChunk* chunks;
+    void** free_list;  // Stack of freed nodes
+} NodePool;
+
+// Create memory pool
+NodePool* pool_create(size_t node_size) {
+    NodePool* pool = malloc(sizeof(NodePool));
+    if (!pool) return NULL;
+
+    pool->node_size = node_size;
+    pool->chunks = NULL;
+    pool->free_list = NULL;
+
+    return pool;
+}
+
+// Allocate new chunk
+static PoolChunk* pool_add_chunk(NodePool* pool) {
+    PoolChunk* chunk = malloc(sizeof(PoolChunk));
+    if (!chunk) return NULL;
+
+    chunk->memory = malloc(pool->node_size * POOL_CHUNK_SIZE);
+    if (!chunk->memory) {
+        free(chunk);
+        return NULL;
+    }
+
+    chunk->used = 0;
+    chunk->next = pool->chunks;
+    pool->chunks = chunk;
+
+    return chunk;
+}
+
+// Allocate node from pool
+void* pool_alloc(NodePool* pool) {
+    // Check free list first
+    if (pool->free_list) {
+        void* node = pool->free_list;
+        pool->free_list = *(void**)node;
+        return node;
+    }
+
+    // Need new memory
+    PoolChunk* chunk = pool->chunks;
+    if (!chunk || chunk->used >= POOL_CHUNK_SIZE) {
+        chunk = pool_add_chunk(pool);
+        if (!chunk) return NULL;
+    }
+
+    void* node = (char*)chunk->memory +
+                 (chunk->used * pool->node_size);
+    chunk->used++;
+
+    return node;
+}
+
+// Free node back to pool (add to free list)
+void pool_free(NodePool* pool, void* node) {
+    *(void**)node = pool->free_list;
+    pool->free_list = node;
+}
+
+// Destroy entire pool
+void pool_destroy(NodePool* pool) {
+    if (!pool) return;
+
+    PoolChunk* chunk = pool->chunks;
+    while (chunk) {
+        PoolChunk* next = chunk->next;
+        free(chunk->memory);
+        free(chunk);
+        chunk = next;
+    }
+
+    free(pool);
+}
+
+// Fast linked list using pool
+typedef struct PoolNode {
+    void* data;
+    struct PoolNode* next;
+} PoolNode;
+
+typedef struct {
+    PoolNode* head;
+    NodePool* pool;
+    size_t size;
+} PoolList;
+
+PoolList* poollist_create(void) {
+    PoolList* list = malloc(sizeof(PoolList));
+    if (!list) return NULL;
+
+    list->pool = pool_create(sizeof(PoolNode));
+    if (!list->pool) {
+        free(list);
+        return NULL;
+    }
+
+    list->head = NULL;
+    list->size = 0;
+
+    return list;
+}
+
+int poollist_prepend(PoolList* list, void* data) {
+    PoolNode* node = pool_alloc(list->pool);
+    if (!node) return -1;
+
+    node->data = data;
+    node->next = list->head;
+    list->head = node;
+    list->size++;
+
+    return 0;
+}
+
+void poollist_remove(PoolList* list, PoolNode* node) {
+    // Unlink and return to pool
+    pool_free(list->pool, node);
+    list->size--;
+}
+\end{lstlisting}
+
+\textbf{Performance impact}: Pool allocation can be 10-100x faster than malloc/free for small objects. Critical for high-performance linked structures.
+
+\section{XOR Linked List}
+
+Space-efficient doubly-linked list using XOR trick—stores only one pointer per node instead of two.
+
+\textbf{The XOR linked list hack}:
+
+Normal doubly-linked lists store two pointers per node: prev and next. But you only ever use them together: to move forward, you need current and next; to move backward, you need current and prev. What if we stored XOR(prev, next) instead?
+
+\textbf{The math behind it}:
+\begin{itemize}
+    \item Node stores: both = prev XOR next
+    \item To get next: next = prev XOR both (since prev XOR prev XOR next = next)
+    \item To get prev: prev = next XOR both (since next XOR prev XOR next = prev)
+    \item XOR is its own inverse: A XOR B XOR B = A
+\end{itemize}
+
+\textbf{Why it works}:
+
+When traversing forward, you always know the previous node (you just came from there). Use it to extract the next node: next = prev XOR node->both. Similarly for backward traversal.
+
+\textbf{Space savings}:
+
+Save one pointer per node. For a million-node list on 64-bit systems, that's 8MB saved. Sounds great, right?
+
+\begin{lstlisting}
+typedef struct XORNode {
+    void* data;
+    struct XORNode* both;  // XOR of prev and next
+} XORNode;
+
+typedef struct {
+    XORNode* head;
+    XORNode* tail;
+    size_t size;
+} XORList;
+
+// XOR two pointers
+static inline XORNode* xor_ptrs(XORNode* a, XORNode* b) {
+    return (XORNode*)((uintptr_t)a ^ (uintptr_t)b);
+}
+
+// Create XOR list
+XORList* xorlist_create(void) {
+    XORList* list = malloc(sizeof(XORList));
+    if (!list) return NULL;
+
+    list->head = NULL;
+    list->tail = NULL;
+    list->size = 0;
+
+    return list;
+}
+
+// Add to front
+int xorlist_prepend(XORList* list, void* data) {
+    XORNode* node = malloc(sizeof(XORNode));
+    if (!node) return -1;
+
+    node->data = data;
+    node->both = xor_ptrs(NULL, list->head);
+
+    if (list->head) {
+        // Update old head's both pointer
+        list->head->both = xor_ptrs(node,
+                           xor_ptrs(NULL, list->head->both));
+    }
+
+    list->head = node;
+
+    if (!list->tail) {
+        list->tail = node;
+    }
+
+    list->size++;
+    return 0;
+}
+
+// Add to end
+int xorlist_append(XORList* list, void* data) {
+    XORNode* node = malloc(sizeof(XORNode));
+    if (!node) return -1;
+
+    node->data = data;
+    node->both = xor_ptrs(list->tail, NULL);
+
+    if (list->tail) {
+        list->tail->both = xor_ptrs(
+            xor_ptrs(list->tail->both, NULL),
+            node
+        );
+    }
+
+    list->tail = node;
+
+    if (!list->head) {
+        list->head = node;
+    }
+
+    list->size++;
+    return 0;
+}
+
+// Forward traversal
+void xorlist_traverse_forward(XORList* list,
+                               void (*visit)(void* data)) {
+    XORNode* curr = list->head;
+    XORNode* prev = NULL;
+    XORNode* next;
+
+    while (curr) {
+        visit(curr->data);
+
+        // Get next: next = prev XOR curr->both
+        next = xor_ptrs(prev, curr->both);
+
+        prev = curr;
+        curr = next;
+    }
+}
+
+// Backward traversal
+void xorlist_traverse_backward(XORList* list,
+                                void (*visit)(void* data)) {
+    XORNode* curr = list->tail;
+    XORNode* next = NULL;
+    XORNode* prev;
+
+    while (curr) {
+        visit(curr->data);
+
+        // Get prev: prev = next XOR curr->both
+        prev = xor_ptrs(curr->both, next);
+
+        next = curr;
+        curr = prev;
+    }
+}
+\end{lstlisting}
+
+\textbf{Caveat}: XOR lists are clever but rarely used in practice because:
+
+\begin{itemize}
+    \item Can't traverse from arbitrary node (need prev or next)
+    \item Pointer arithmetic with XOR is non-standard
+    \item Not compatible with garbage collectors
+    \item Negligible space savings on 64-bit systems (8 bytes per node vs. total memory)
+    \item Hard to debug—can't inspect pointers in debugger
+    \item Breaks pointer provenance rules in modern C
+    \item No real-world performance benefit (the extra pointer is usually cached)
+\end{itemize}
+
+\textbf{When to use}: Embedded systems with severe memory constraints, or when you need to impress interviewers! In 30+ years of C programming, I've never seen XOR lists in production code outside of academic papers and interview questions. It's a neat trick, but optimizing pointer count without considering cache effects is premature optimization.
+
+\textbf{The cache reality}:
+
+Modern CPUs fetch entire cache lines (64 bytes). Your node with two pointers (16 bytes) fits in the same cache line as a node with one pointer (8 bytes). You're not saving cache bandwidth, just heap space. And heap space is cheap—developer time debugging pointer bugs is expensive.
+
+\section{Self-Organizing Lists}
+
+Lists that reorganize based on access patterns—improve performance for non-uniform access.
+
+\textbf{The 80/20 rule applied to data structures}:
+
+Most data access follows a power law: 20\% of items receive 80\% of accesses. If your linked list puts frequently-accessed items at the front, searches become much faster on average. Self-organizing lists do this automatically.
+
+\textbf{Three classic heuristics}:
+
+\begin{enumerate}
+    \item \textbf{Move-to-Front (MTF)}: When you access an item, move it to the front. Simple and aggressive.
+    \item \textbf{Transpose}: When you access an item, swap it with the previous item. Conservative, gradually bubbles up popular items.
+    \item \textbf{Count}: Track access frequency, periodically reorder by count. Most accurate but requires storage and maintenance.
+\end{enumerate}
+
+\textbf{When self-organizing lists excel}:
+\begin{itemize}
+    \item Cache implementations (LRU-like behavior)
+    \item Symbol tables (frequently-used identifiers accessed often)
+    \item Network routing tables (popular routes accessed constantly)
+    \item Spell checkers (common words checked often)
+    \item Any scenario with locality of reference
+\end{itemize}
+
+\textbf{Performance analysis}:
+
+For random access: self-organizing lists perform worse (O(n) with reordering overhead).
+For skewed access: self-organizing lists approach O(1) for popular items.
+The more skewed your access pattern, the bigger the win.
+
+\begin{lstlisting}
+// Move-to-front heuristic
+typedef struct MoveToFrontNode {
+    void* data;
+    struct MoveToFrontNode* next;
+    int access_count;
+} MTFNode;
+
+typedef struct {
+    MTFNode* head;
+    int (*compare)(const void*, const void*);
+} MoveToFrontList;
+
+// Search and move to front
+void* mtf_search(MoveToFrontList* list, const void* key) {
+    MTFNode* prev = NULL;
+    MTFNode* curr = list->head;
+
+    while (curr) {
+        if (list->compare(curr->data, key) == 0) {
+            curr->access_count++;
+
+            // Move to front if not already there
+            if (prev) {
+                prev->next = curr->next;
+                curr->next = list->head;
+                list->head = curr;
+            }
+
+            return curr->data;
+        }
+
+        prev = curr;
+        curr = curr->next;
+    }
+
+    return NULL;
+}
+
+// Transpose heuristic - swap with previous
+void* transpose_search(MoveToFrontList* list, const void* key) {
+    MTFNode* prev_prev = NULL;
+    MTFNode* prev = NULL;
+    MTFNode* curr = list->head;
+
+    while (curr) {
+        if (list->compare(curr->data, key) == 0) {
+            curr->access_count++;
+
+            // Swap with previous element
+            if (prev) {
+                prev->next = curr->next;
+                curr->next = prev;
+
+                if (prev_prev) {
+                    prev_prev->next = curr;
+                } else {
+                    list->head = curr;
+                }
+            }
+
+            return curr->data;
+        }
+
+        prev_prev = prev;
+        prev = curr;
+        curr = curr->next;
+    }
+
+    return NULL;
+}
+
+// Count heuristic - sort by access frequency
+void mtf_reorder_by_frequency(MoveToFrontList* list) {
+    // Insertion sort by access_count
+    MTFNode sorted_head = {.next = NULL};
+    MTFNode* curr = list->head;
+
+    while (curr) {
+        MTFNode* next = curr->next;
+
+        // Find position in sorted list
+        MTFNode* sorted_prev = &sorted_head;
+        while (sorted_prev->next &&
+               sorted_prev->next->access_count > curr->access_count) {
+            sorted_prev = sorted_prev->next;
+        }
+
+        // Insert
+        curr->next = sorted_prev->next;
+        sorted_prev->next = curr;
+
+        curr = next;
+    }
+
+    list->head = sorted_head.next;
+}
+\end{lstlisting}
+
+\textbf{Real-world use}: Cache implementations, frequency-based optimization, adaptive data structures.
+
+\section{Unrolled Linked List}
+
+Hybrid of array and linked list—multiple elements per node for better cache performance.
+
+\textbf{The best of both worlds}:
+
+Regular linked lists have terrible cache performance—each node is a separate allocation scattered across memory. Every traversal incurs a cache miss. Unrolled linked lists fix this by storing multiple elements per node.
+
+Instead of:
+\begin{verbatim}
+Node -> [data] -> [data] -> [data] -> [data]
+\end{verbatim}
+
+You get:
+\begin{verbatim}
+Node -> [data, data, data, data] -> [data, data, data, data]
+\end{verbatim}
+
+\textbf{Performance implications}:
+
+\begin{itemize}
+    \item \textbf{Fewer allocations}: 64 elements needs 64 nodes normally, only 4 with UNROLL\_SIZE=16
+    \item \textbf{Better cache utilization}: Sequential elements in same node are cached together
+    \item \textbf{Lower memory overhead}: One pointer per 16 elements instead of per element
+    \item \textbf{Still dynamic}: Can grow and insert like regular linked list
+\end{itemize}
+
+\textbf{The trade-off}:
+
+Unrolled lists are more complex than either arrays or linked lists. Insertion might require shifting elements within a node, or splitting a full node. But for large collections with sequential access patterns, the 2-10x speedup is worth it.
+
+\textbf{Real-world usage}:
+
+Database B-tree implementations use this idea—each tree node contains multiple keys. This reduces tree height and improves cache performance. You're applying the same principle to linked lists.
+
+\begin{lstlisting}
+#define UNROLL_SIZE 16
+
+typedef struct UnrolledNode {
+    void* data[UNROLL_SIZE];
+    int count;  // Number of elements in this node
+    struct UnrolledNode* next;
+} UnrolledNode;
+
+typedef struct {
+    UnrolledNode* head;
+    size_t size;
+    size_t node_count;
+} UnrolledList;
+
+// Create unrolled list
+UnrolledList* unrolled_create(void) {
+    UnrolledList* list = malloc(sizeof(UnrolledList));
+    if (!list) return NULL;
+
+    list->head = NULL;
+    list->size = 0;
+    list->node_count = 0;
+
+    return list;
+}
+
+// Insert element
+int unrolled_insert(UnrolledList* list, void* data) {
+    // Find node with space or create new one
+    UnrolledNode* node = list->head;
+
+    if (!node || node->count >= UNROLL_SIZE) {
+        // Need new node
+        node = malloc(sizeof(UnrolledNode));
+        if (!node) return -1;
+
+        node->count = 0;
+        node->next = list->head;
+        list->head = node;
+        list->node_count++;
+    }
+
+    node->data[node->count++] = data;
+    list->size++;
+
+    return 0;
+}
+
+// Get element by index
+void* unrolled_get(UnrolledList* list, size_t index) {
+    if (index >= list->size) return NULL;
+
+    UnrolledNode* node = list->head;
+    size_t count = 0;
+
+    while (node) {
+        if (index < count + node->count) {
+            return node->data[index - count];
+        }
+        count += node->count;
+        node = node->next;
+    }
+
+    return NULL;
+}
+
+// Iterate
+void unrolled_foreach(UnrolledList* list, void (*visit)(void*)) {
+    UnrolledNode* node = list->head;
+
+    while (node) {
+        for (int i = 0; i < node->count; i++) {
+            visit(node->data[i]);
+        }
+        node = node->next;
+    }
+}
+\end{lstlisting}
+
+\textbf{Benefits}:
+
+\begin{itemize}
+    \item Better cache locality than regular linked list
+    \item Fewer allocations (fewer nodes)
+    \item Less memory overhead (fewer pointers per element)
+    \item Still dynamic and allows fast insertion
+\end{itemize}
+
+\textbf{Trade-off}: More complex than simple linked list, slower than pure arrays for sequential access.
+
+\section{Lock-Free Linked Lists}
+
+Thread-safe linked structures without locks—using atomic operations.
+
+\textbf{The lock-free promise}:
+
+Locks have problems: they block threads, can deadlock, suffer from contention, and kill performance under high concurrency. Lock-free data structures use atomic compare-and-swap operations instead—threads never block, guaranteed progress, no deadlocks.
+
+\textbf{The core technique: Compare-And-Swap (CAS)}:
+
+\begin{verbatim}
+bool CAS(pointer* location, old_value, new_value) {
+    atomically {
+        if (*location == old_value) {
+            *location = new_value;
+            return true;
+        }
+        return false;
+    }
+}
+\end{verbatim}
+
+If the value at location hasn't changed since we read it (still equals old\_value), update it to new\_value. If another thread modified it, CAS fails and we retry.
+
+\textbf{Lock-free push algorithm}:
+\begin{enumerate}
+    \item Read current head
+    \item Create new node pointing to current head
+    \item CAS: if head unchanged, swap to new node
+    \item If CAS failed (another thread modified head), retry
+\end{enumerate}
+
+\textbf{Why this is tricky}:
+
+The real challenge isn't insertion—it's memory reclamation. You can't just free() a node after removal because another thread might still be accessing it! Solutions include hazard pointers, epoch-based reclamation, or reference counting. All are complex.
+
+\begin{lstlisting}
+#include <stdatomic.h>
+
+typedef struct LockFreeNode {
+    void* data;
+    _Atomic(struct LockFreeNode*) next;
+} LockFreeNode;
+
+typedef struct {
+    _Atomic(LockFreeNode*) head;
+} LockFreeList;
+
+// Create lock-free list
+LockFreeList* lockfree_create(void) {
+    LockFreeList* list = malloc(sizeof(LockFreeList));
+    if (!list) return NULL;
+
+    atomic_init(&list->head, NULL);
+    return list;
+}
+
+// Push to front (lock-free)
+int lockfree_push(LockFreeList* list, void* data) {
+    LockFreeNode* node = malloc(sizeof(LockFreeNode));
+    if (!node) return -1;
+
+    node->data = data;
+
+    // Compare-and-swap loop
+    LockFreeNode* old_head = atomic_load(&list->head);
+    do {
+        atomic_store(&node->next, old_head);
+    } while (!atomic_compare_exchange_weak(&list->head,
+                                           &old_head,
+                                           node));
+
+    return 0;
+}
+
+// Pop from front (lock-free)
+void* lockfree_pop(LockFreeList* list) {
+    LockFreeNode* old_head;
+    LockFreeNode* new_head;
+
+    do {
+        old_head = atomic_load(&list->head);
+        if (!old_head) return NULL;
+
+        new_head = atomic_load(&old_head->next);
+    } while (!atomic_compare_exchange_weak(&list->head,
+                                           &old_head,
+                                           new_head));
+
+    void* data = old_head->data;
+    // Note: Can't immediately free old_head - ABA problem!
+    // Need hazard pointers or epoch-based reclamation
+
+    return data;
+}
+\end{lstlisting}
+
+\textbf{Challenge}: Memory reclamation is hard in lock-free structures. You can't just free a node—another thread might still be accessing it. Solutions include:
+
+\begin{itemize}
+    \item \textbf{Hazard pointers}: Threads announce which pointers they're using
+    \item \textbf{Epoch-based reclamation}: Track epochs, free memory from old epochs
+    \item \textbf{Reference counting}: Atomic reference count, free at zero
+    \item \textbf{Garbage collection}: Let GC handle it (not available in C)
+\end{itemize}
+
+\textbf{The ABA problem}:
+
+A classic lock-free bug: Thread 1 reads head=A, gets preempted. Thread 2 removes A, removes B, adds A back. Thread 1 resumes, sees head still equals A, assumes nothing changed, does CAS. But everything changed! A might point to freed memory now.
+
+Solution: tagged pointers or version numbers. Store a counter with the pointer, increment on each change. CAS checks both pointer and counter.
+
+\textbf{When to use lock-free structures}:
+
+Lock-free programming is extremely difficult to get right. Use it only when:
+\begin{itemize}
+    \item Profiling shows locks are a bottleneck
+    \item You understand memory ordering and the memory model
+    \item You have comprehensive tests and formal verification
+    \item You're willing to debug race conditions
+\end{itemize}
+
+For most applications, a simple mutex is faster, simpler, and correct. Lock-free is not inherently faster—it's about avoiding blocking, not raw speed.
+
+\section{Common Linked List Algorithms}
+
+These algorithms appear constantly in interviews and real code. Master them.
+
+\subsection{Reverse a Linked List}
+
+Reversing a linked list is the "Hello World" of linked list algorithms. It tests your understanding of pointer manipulation and is a building block for more complex algorithms.
+
+\begin{lstlisting}
+// Iterative reverse
+Node* reverse_iterative(Node* head) {
+    Node* prev = NULL;
+    Node* curr = head;
+
+    while (curr) {
+        Node* next = curr->next;
+        curr->next = prev;
+        prev = curr;
+        curr = next;
+    }
+
+    return prev;
+}
+
+// Recursive reverse
+Node* reverse_recursive(Node* head) {
+    if (!head || !head->next) {
+        return head;
+    }
+
+    Node* new_head = reverse_recursive(head->next);
+    head->next->next = head;
+    head->next = NULL;
+
+    return new_head;
+}
+\end{lstlisting}
+
+\subsection{Merge Two Sorted Lists}
+
+The merge operation is fundamental to merge sort. Given two sorted lists, produce one sorted list. The trick: use a dummy head node to simplify edge cases.
+
+\begin{lstlisting}
+Node* merge_sorted(Node* l1, Node* l2,
+                   int (*compare)(const void*, const void*)) {
+    Node dummy = {0};
+    Node* tail = &dummy;
+
+    while (l1 && l2) {
+        if (compare(l1->data, l2->data) <= 0) {
+            tail->next = l1;
+            l1 = l1->next;
+        } else {
+            tail->next = l2;
+            l2 = l2->next;
+        }
+        tail = tail->next;
+    }
+
+    tail->next = l1 ? l1 : l2;
+
+    return dummy.next;
+}
+\end{lstlisting}
+
+\subsection{Merge Sort for Linked Lists}
+
+Merge sort is the best sorting algorithm for linked lists. Unlike quicksort (which needs random access) or heapsort (which needs arrays), merge sort only needs sequential access—perfect for linked lists.
+
+\textbf{Why merge sort for linked lists?}
+\begin{itemize}
+    \item O(n log n) time complexity
+    \item O(1) space complexity (in-place, unlike array merge sort)
+    \item Stable sort (preserves order of equal elements)
+    \item No random access needed
+\end{itemize}
+
+\textbf{Algorithm}:
+\begin{enumerate}
+    \item Find middle using slow/fast pointers
+    \item Split list in half
+    \item Recursively sort both halves
+    \item Merge sorted halves
+\end{enumerate}
+
+\begin{lstlisting}
+// Find middle using slow/fast pointers
+Node* find_middle(Node* head) {
+    Node* slow = head;
+    Node* fast = head->next;
+
+    while (fast && fast->next) {
+        slow = slow->next;
+        fast = fast->next->next;
+    }
+
+    return slow;
+}
+
+// Merge sort
+Node* merge_sort(Node* head,
+                 int (*compare)(const void*, const void*)) {
+    if (!head || !head->next) {
+        return head;
+    }
+
+    // Split list
+    Node* middle = find_middle(head);
+    Node* right = middle->next;
+    middle->next = NULL;
+
+    // Recursively sort both halves
+    Node* left = merge_sort(head, compare);
+    right = merge_sort(right, compare);
+
+    // Merge sorted halves
+    return merge_sorted(left, right, compare);
+}
+\end{lstlisting}
+
+\subsection{Remove Duplicates from Sorted List}
+
+A common operation: given a sorted list, remove duplicate values. For sorted lists, duplicates are adjacent, making this a simple single-pass algorithm.
+
+\begin{lstlisting}
+void remove_duplicates(Node* head,
+                       int (*compare)(const void*, const void*)) {
+    Node* curr = head;
+
+    while (curr && curr->next) {
+        if (compare(curr->data, curr->next->data) == 0) {
+            Node* dup = curr->next;
+            curr->next = dup->next;
+            free(dup);
+        } else {
+            curr = curr->next;
+        }
+    }
+}
+\end{lstlisting}
+
+\section{Summary}
+
+Linked structures are fundamental to systems programming. Understanding them deeply separates competent C programmers from experts.
+
+\textbf{The key insight}: Linked structures trade memory efficiency and cache performance for flexibility and algorithmic efficiency. Arrays are faster for sequential access and random access. Linked structures win when you need:
+\begin{itemize}
+    \item Frequent insertions/deletions at arbitrary positions
+    \item Dynamic size without reallocation
+    \item No contiguous memory requirement
+    \item Ability to split/merge collections in O(1)
+\end{itemize}
+
+\textbf{Choosing the right linked structure}:
+
+\begin{itemize}
+    \item \textbf{Singly-linked}: Simple, forward traversal only
+    \item \textbf{Doubly-linked}: Bidirectional, O(1) deletion
+    \item \textbf{Circular}: Round-robin, no end
+    \item \textbf{Skip lists}: O(log n) operations, simpler than trees
+    \item \textbf{Intrusive lists}: Embed nodes in structs (Linux kernel style)
+    \item \textbf{Memory pools}: Batch allocation for performance
+    \item \textbf{Unrolled lists}: Hybrid array/list for cache locality
+    \item \textbf{Self-organizing}: Adapt to access patterns
+\end{itemize}
+
+\textbf{Key techniques}:
+
+\begin{itemize}
+    \item Always maintain tail pointers for O(1) append
+    \item Use sentinel nodes to simplify edge cases
+    \item Master pointer manipulation—draw pictures!
+    \item Use memory pools for high-performance code
+    \item Know common algorithms (reverse, merge, detect cycle)
+\end{itemize}
+
+Linked structures sacrifice cache locality and memory efficiency for flexibility. Choose them when you need dynamic size and frequent insertions/deletions at arbitrary positions. For most other cases, arrays are faster!

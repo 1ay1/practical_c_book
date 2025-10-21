@@ -1,0 +1,1761 @@
+\chapter{State Machine Patterns}
+
+\section{Why State Machines?}
+
+State machines are one of the most practical patterns in C. They help manage complex behavior by breaking it down into discrete states and transitions. Think of a vending machine, network connection, or game character—all are state machines.
+
+A \textbf{state machine} (also called a finite state machine or FSM) is a mathematical model of computation that can be in exactly one state at any given time. The machine changes from one state to another in response to external inputs called \textbf{events} or \textbf{transitions}.
+
+Why use state machines?
+
+\begin{itemize}
+    \item \textbf{Clarity}: Complex logic becomes easy to understand
+    \item \textbf{Maintainability}: Adding new states or transitions is straightforward
+    \item \textbf{Testability}: Each state can be tested independently
+    \item \textbf{Bug Prevention}: Invalid state transitions are impossible
+    \item \textbf{Documentation}: The state diagram IS the documentation
+\end{itemize}
+
+Consider a door: it can be \textit{open}, \textit{closed}, or \textit{locked}. You can't lock an open door, and you can't open a locked door. State machines enforce these rules naturally.
+
+\begin{lstlisting}
+// Without state machine - messy conditionals
+void handle_input(char c) {
+    if (connected) {
+        if (authenticated) {
+            if (in_transaction) {
+                // Handle transaction input
+            } else {
+                // Handle command input
+            }
+        } else {
+            // Handle authentication input
+        }
+    } else {
+        // Handle connection input
+    }
+}
+
+// With state machine - clear and organized
+void handle_input(char c) {
+    switch (current_state) {
+        case STATE_CONNECTING:
+            handle_connecting(c);
+            break;
+        case STATE_AUTHENTICATING:
+            handle_authenticating(c);
+            break;
+        case STATE_READY:
+            handle_ready(c);
+            break;
+        case STATE_IN_TRANSACTION:
+            handle_transaction(c);
+            break;
+    }
+}
+\end{lstlisting}
+
+\section{Enum-Based State Machines}
+
+The simplest and most common pattern—using enums to represent states and a simple variable to track the current state.
+
+This is the most straightforward implementation and should be your default choice for simple state machines. The state is just an enum value, and state transitions are simple assignments. This approach is fast, type-safe, and easy to understand.
+
+\begin{lstlisting}
+typedef enum {
+    STATE_IDLE,
+    STATE_CONNECTING,
+    STATE_CONNECTED,
+    STATE_DISCONNECTING,
+    STATE_ERROR
+} ConnectionState;
+
+typedef struct {
+    ConnectionState state;
+    int socket;
+    char error_msg[256];
+    time_t state_entered;
+} Connection;
+
+// State transition function
+void connection_set_state(Connection* conn, ConnectionState new_state) {
+    printf("Transition: %d -> %d\n", conn->state, new_state);
+    conn->state = new_state;
+    conn->state_entered = time(NULL);
+}
+
+// State-based behavior
+int connection_send(Connection* conn, const char* data) {
+    if (conn->state != STATE_CONNECTED) {
+        return -1;  // Invalid state
+    }
+    return send(conn->socket, data, strlen(data), 0);
+}
+\end{lstlisting}
+
+\begin{tipbox}
+Always validate state before performing actions. This prevents bugs where operations are attempted in invalid states.
+\end{tipbox}
+
+\section{Switch-Based State Machine}
+
+The classic approach using switch statements to handle different behavior for each state.
+
+This pattern is extremely common in parsers, protocol handlers, and character-by-character processing. Each \texttt{case} in the switch represents a state, and within each case, you process inputs and potentially transition to other states.
+
+The key advantage is that all state-specific logic is grouped together, making it easy to see what happens in each state. This is particularly useful for \textbf{event-driven} systems where you need to react differently to the same input depending on the current state.
+
+\begin{lstlisting}
+typedef enum {
+    PARSE_START,
+    PARSE_TAG_OPEN,
+    PARSE_TAG_NAME,
+    PARSE_TAG_CLOSE,
+    PARSE_TEXT,
+    PARSE_ERROR
+} ParseState;
+
+typedef struct {
+    ParseState state;
+    char buffer[1024];
+    size_t buffer_pos;
+} Parser;
+
+void parser_init(Parser* p) {
+    p->state = PARSE_START;
+    p->buffer_pos = 0;
+}
+
+void parser_process_char(Parser* p, char c) {
+    switch (p->state) {
+        case PARSE_START:
+            if (c == '<') {
+                p->state = PARSE_TAG_OPEN;
+            } else {
+                p->buffer[p->buffer_pos++] = c;
+                p->state = PARSE_TEXT;
+            }
+            break;
+
+        case PARSE_TAG_OPEN:
+            if (c == '/') {
+                p->state = PARSE_TAG_CLOSE;
+            } else if (isalpha(c)) {
+                p->buffer[0] = c;
+                p->buffer_pos = 1;
+                p->state = PARSE_TAG_NAME;
+            } else {
+                p->state = PARSE_ERROR;
+            }
+            break;
+
+        case PARSE_TAG_NAME:
+            if (c == '>') {
+                p->buffer[p->buffer_pos] = '\0';
+                printf("Found tag: %s\n", p->buffer);
+                p->buffer_pos = 0;
+                p->state = PARSE_START;
+            } else if (isalnum(c)) {
+                p->buffer[p->buffer_pos++] = c;
+            } else {
+                p->state = PARSE_ERROR;
+            }
+            break;
+
+        case PARSE_TAG_CLOSE:
+            if (c == '>') {
+                p->state = PARSE_START;
+            } else if (!isalnum(c)) {
+                p->state = PARSE_ERROR;
+            }
+            break;
+
+        case PARSE_TEXT:
+            if (c == '<') {
+                p->buffer[p->buffer_pos] = '\0';
+                printf("Text: %s\n", p->buffer);
+                p->buffer_pos = 0;
+                p->state = PARSE_TAG_OPEN;
+            } else {
+                p->buffer[p->buffer_pos++] = c;
+            }
+            break;
+
+        case PARSE_ERROR:
+            // Stay in error state
+            break;
+    }
+}
+\end{lstlisting}
+
+\section{Function Pointer State Machine}
+
+More flexible—each state is a function rather than a case in a switch statement.
+
+This pattern provides several advantages over switch-based machines:
+
+\begin{itemize}
+    \item \textbf{Encapsulation}: Each state's logic is in its own function
+    \item \textbf{Extensibility}: Adding states doesn't require modifying a central switch
+    \item \textbf{Runtime Flexibility}: States can be changed or added at runtime
+    \item \textbf{Polymorphism}: Different objects can have different state functions
+\end{itemize}
+
+The trade-off is slightly more complexity and an indirect function call overhead (usually negligible). This approach shines when you have many states or when state behavior needs to be determined dynamically.
+
+\begin{lstlisting}
+// Forward declaration
+typedef struct StateMachine StateMachine;
+
+// State function type
+typedef void (*StateFunc)(StateMachine* sm, int event);
+
+struct StateMachine {
+    StateFunc current_state;
+    void* context;  // User data
+};
+
+// State functions
+void state_idle(StateMachine* sm, int event) {
+    printf("Idle state, event: %d\n", event);
+
+    if (event == EVENT_START) {
+        sm->current_state = state_running;
+    }
+}
+
+void state_running(StateMachine* sm, int event) {
+    printf("Running state, event: %d\n", event);
+
+    if (event == EVENT_STOP) {
+        sm->current_state = state_idle;
+    } else if (event == EVENT_PAUSE) {
+        sm->current_state = state_paused;
+    }
+}
+
+void state_paused(StateMachine* sm, int event) {
+    printf("Paused state, event: %d\n", event);
+
+    if (event == EVENT_RESUME) {
+        sm->current_state = state_running;
+    } else if (event == EVENT_STOP) {
+        sm->current_state = state_idle;
+    }
+}
+
+// Process event
+void sm_handle_event(StateMachine* sm, int event) {
+    if (sm->current_state) {
+        sm->current_state(sm, event);
+    }
+}
+
+// Usage
+StateMachine sm = {
+    .current_state = state_idle,
+    .context = NULL
+};
+
+sm_handle_event(&sm, EVENT_START);
+sm_handle_event(&sm, EVENT_PAUSE);
+sm_handle_event(&sm, EVENT_RESUME);
+\end{lstlisting}
+
+\begin{notebox}
+Function pointer state machines are more flexible than switch-based ones. They allow runtime state addition and are easier to extend.
+\end{notebox}
+
+\section{Hierarchical State Machines}
+
+States within states for complex behavior—also known as \textbf{nested states} or \textbf{substates}.
+
+In real systems, states often have substates. For example, a character might be "alive" with substates "idle", "moving", or "attacking". When the character dies, all these substates become irrelevant.
+
+Hierarchical state machines allow you to:
+\begin{itemize}
+    \item Share behavior across related states
+    \item Reduce code duplication
+    \item Model complex systems more naturally
+    \item Handle events at the appropriate level
+\end{itemize}
+
+Think of it as inheritance for states: substates inherit the behavior of their parent state, but can override specific behaviors.
+
+\begin{lstlisting}
+typedef enum {
+    STATE_ALIVE,
+    STATE_ALIVE_IDLE,
+    STATE_ALIVE_MOVING,
+    STATE_ALIVE_ATTACKING,
+    STATE_DEAD
+} CharacterState;
+
+typedef struct {
+    CharacterState state;
+    CharacterState parent_state;
+} Character;
+
+// Check if in a parent state
+int character_is_alive(Character* c) {
+    return c->state == STATE_ALIVE ||
+           c->state == STATE_ALIVE_IDLE ||
+           c->state == STATE_ALIVE_MOVING ||
+           c->state == STATE_ALIVE_ATTACKING;
+}
+
+void character_take_damage(Character* c, int damage) {
+    if (character_is_alive(c)) {
+        // All "alive" substates can take damage
+        c->health -= damage;
+        if (c->health <= 0) {
+            c->state = STATE_DEAD;
+        }
+    }
+}
+\end{lstlisting}
+
+\section{State Machine with Entry/Exit Actions}
+
+Execute code when entering or leaving states—a critical pattern for resource management and initialization.
+
+Many state machines need to perform actions when transitioning between states:
+\begin{itemize}
+    \item \textbf{Entry actions}: Run when entering a state (initialization, resource allocation)
+    \item \textbf{Exit actions}: Run when leaving a state (cleanup, resource deallocation)
+    \item \textbf{Transition actions}: Run during the transition itself
+\end{itemize}
+
+This pattern is essential for:
+\begin{itemize}
+    \item Starting/stopping timers
+    \item Acquiring/releasing locks
+    \item Opening/closing files or connections
+    \item Playing sounds or animations
+    \item Logging state changes
+\end{itemize}
+
+Without entry/exit actions, you'd have to remember to run setup/cleanup code every time you transition, leading to bugs and duplicated code.
+
+\begin{lstlisting}
+typedef enum {
+    STATE_OFF,
+    STATE_STARTING,
+    STATE_ON,
+    STATE_STOPPING
+} MotorState;
+
+typedef struct {
+    MotorState state;
+} Motor;
+
+// Entry actions
+void motor_enter_starting(Motor* m) {
+    printf("Motor starting up...\n");
+    // Initialize hardware
+}
+
+void motor_enter_on(Motor* m) {
+    printf("Motor running\n");
+    // Enable monitoring
+}
+
+void motor_enter_stopping(Motor* m) {
+    printf("Motor shutting down...\n");
+    // Cleanup
+}
+
+// Exit actions
+void motor_exit_on(Motor* m) {
+    printf("Leaving ON state\n");
+    // Disable monitoring
+}
+
+// State transition with actions
+void motor_change_state(Motor* m, MotorState new_state) {
+    // Exit current state
+    switch (m->state) {
+        case STATE_ON:
+            motor_exit_on(m);
+            break;
+        default:
+            break;
+    }
+
+    // Enter new state
+    m->state = new_state;
+
+    switch (new_state) {
+        case STATE_STARTING:
+            motor_enter_starting(m);
+            break;
+        case STATE_ON:
+            motor_enter_on(m);
+            break;
+        case STATE_STOPPING:
+            motor_enter_stopping(m);
+            break;
+        default:
+            break;
+    }
+}
+\end{lstlisting}
+
+\section{Table-Driven State Machine}
+
+Use a table for complex state transitions—separating the transition logic from the implementation.
+
+Table-driven state machines represent transitions as data rather than code. This is powerful because:
+
+\begin{itemize}
+    \item \textbf{Clarity}: The transition table is easy to visualize
+    \item \textbf{Validation}: You can verify all transitions are defined
+    \item \textbf{Generation}: Tables can be generated from diagrams or specifications
+    \item \textbf{Configuration}: Behavior can be changed without recompiling
+    \item \textbf{Testing}: You can systematically test all transitions
+\end{itemize}
+
+This approach is ideal for complex state machines with many states and transitions. The table can even be loaded from a file, making the state machine behavior configurable at runtime. Protocol implementations often use this pattern.
+
+\begin{lstlisting}
+typedef enum {
+    STATE_LOCKED,
+    STATE_UNLOCKED,
+    STATE_OPEN
+} DoorState;
+
+typedef enum {
+    EVENT_LOCK,
+    EVENT_UNLOCK,
+    EVENT_OPEN,
+    EVENT_CLOSE
+} DoorEvent;
+
+typedef struct {
+    DoorState from_state;
+    DoorEvent event;
+    DoorState to_state;
+    void (*action)(void*);  // Optional action
+} Transition;
+
+// Transition table
+Transition door_transitions[] = {
+    {STATE_LOCKED,   EVENT_UNLOCK, STATE_UNLOCKED, NULL},
+    {STATE_UNLOCKED, EVENT_LOCK,   STATE_LOCKED,   NULL},
+    {STATE_UNLOCKED, EVENT_OPEN,   STATE_OPEN,     open_door},
+    {STATE_OPEN,     EVENT_CLOSE,  STATE_UNLOCKED, close_door},
+    {STATE_OPEN,     EVENT_LOCK,   STATE_OPEN,     NULL},  // Invalid
+};
+
+typedef struct {
+    DoorState state;
+} Door;
+
+int door_handle_event(Door* door, DoorEvent event) {
+    // Search transition table
+    for (size_t i = 0; i < sizeof(door_transitions) / sizeof(Transition); i++) {
+        Transition* t = &door_transitions[i];
+
+        if (t->from_state == door->state && t->event == event) {
+            printf("Transition: %d -> %d\n", t->from_state, t->to_state);
+
+            door->state = t->to_state;
+
+            if (t->action) {
+                t->action(door);
+            }
+
+            return 0;  // Success
+        }
+    }
+
+    printf("Invalid transition from state %d with event %d\n",
+           door->state, event);
+    return -1;  // Invalid transition
+}
+\end{lstlisting}
+
+\begin{tipbox}
+Table-driven state machines separate data from code. You can load transitions from files, making behavior easily configurable!
+\end{tipbox}
+
+\section{Timeout and Timed States}
+
+States that automatically transition after a timeout—essential for real-time and reactive systems.
+
+Many systems need states that expire or time out:
+\begin{itemize}
+    \item Network connections that timeout if no response
+    \item User interfaces with automatic dismiss
+    \item Game states with time limits
+    \item Safety systems that require periodic "heartbeat"
+\end{itemize}
+
+The key is tracking when each state was entered and checking elapsed time. This requires a main loop or periodic update function that calls your state machine's update method.
+
+\textbf{Important}: Avoid busy-waiting in states. Instead, check timeout conditions in an update loop that's called regularly (e.g., 60 times per second in a game, or in your event loop).
+
+\begin{lstlisting}
+#include <time.h>
+
+typedef struct {
+    State state;
+    time_t state_entered;
+    double timeout_seconds;
+} TimedStateMachine;
+
+void sm_set_state_with_timeout(TimedStateMachine* sm,
+                                State new_state,
+                                double timeout) {
+    sm->state = new_state;
+    sm->state_entered = time(NULL);
+    sm->timeout_seconds = timeout;
+}
+
+void sm_update(TimedStateMachine* sm) {
+    double elapsed = difftime(time(NULL), sm->state_entered);
+
+    if (sm->timeout_seconds > 0 && elapsed >= sm->timeout_seconds) {
+        // Timeout occurred
+        printf("State timeout!\n");
+
+        switch (sm->state) {
+            case STATE_WAITING:
+                sm_set_state_with_timeout(sm, STATE_TIMEOUT, 0);
+                break;
+            // Handle other timeout transitions
+        }
+    }
+}
+
+// Call sm_update() regularly in your main loop
+\end{lstlisting}
+
+\section{State History}
+
+Remember previous states for "back" functionality—implementing undo/redo or navigation history.
+
+State history is crucial for:
+\begin{itemize}
+    \item UI navigation (back button)
+    \item Undo/redo functionality
+    \item Debugging (trace how you got to current state)
+    \item Context preservation (return to where you were)
+\end{itemize}
+
+This is essentially a stack of states. Each time you transition to a new state, you push the old state onto the stack. Going "back" pops from the stack and returns to the previous state.
+
+\textbf{Design consideration}: Decide whether history should be limited (circular buffer) or unlimited (dynamic array). Limited history prevents memory growth but loses old history.
+
+\begin{lstlisting}
+#define HISTORY_SIZE 10
+
+typedef struct {
+    State current_state;
+    State history[HISTORY_SIZE];
+    int history_pos;
+} StateMachineWithHistory;
+
+void sm_push_state(StateMachineWithHistory* sm, State new_state) {
+    // Save current state to history
+    sm->history[sm->history_pos] = sm->current_state;
+    sm->history_pos = (sm->history_pos + 1) % HISTORY_SIZE;
+
+    // Change to new state
+    sm->current_state = new_state;
+}
+
+State sm_pop_state(StateMachineWithHistory* sm) {
+    if (sm->history_pos == 0) {
+        return sm->current_state;  // No history
+    }
+
+    // Go back to previous state
+    sm->history_pos = (sm->history_pos - 1 + HISTORY_SIZE) % HISTORY_SIZE;
+    sm->current_state = sm->history[sm->history_pos];
+
+    return sm->current_state;
+}
+\end{lstlisting}
+
+\section{Mealy vs Moore Machines}
+
+Two fundamental types of state machines, differing in how they produce output.
+
+\textbf{Moore Machine}: Output depends only on the current state. The output is determined by which state you're in, not how you got there. This makes Moore machines easier to reason about and debug.
+
+\textbf{Mealy Machine}: Output depends on both the current state and the input event. This can make Mealy machines more compact (fewer states), but also more complex to understand.
+
+In practice, most real-world state machines are hybrids—some outputs depend only on state, others on state and input. Choose the style that makes your code clearest.
+
+\subsection{Moore Machine (Output depends on state)}
+
+\begin{lstlisting}
+typedef enum {
+    STATE_GREEN,
+    STATE_YELLOW,
+    STATE_RED
+} TrafficLightState;
+
+// Output is determined by state
+const char* get_light_color(TrafficLightState state) {
+    switch (state) {
+        case STATE_GREEN:  return "GREEN";
+        case STATE_YELLOW: return "YELLOW";
+        case STATE_RED:    return "RED";
+        default:           return "UNKNOWN";
+    }
+}
+\end{lstlisting}
+
+\subsection{Mealy Machine (Output depends on state and input)}
+
+Notice how the same state can produce different outputs depending on the input. This is more flexible but requires careful design to avoid confusion. The output is part of the transition, not just the state.
+
+\begin{lstlisting}
+typedef enum {
+    VENDING_IDLE,
+    VENDING_HAS_25,
+    VENDING_HAS_50
+} VendingState;
+
+// Output depends on both state and input
+const char* vending_insert_coin(VendingState* state, int cents) {
+    switch (*state) {
+        case VENDING_IDLE:
+            if (cents == 25) {
+                *state = VENDING_HAS_25;
+                return "Insert 50 more cents";
+            } else if (cents == 50) {
+                *state = VENDING_HAS_50;
+                return "Insert 25 more cents";
+            }
+            break;
+
+        case VENDING_HAS_25:
+            if (cents == 50) {
+                *state = VENDING_IDLE;
+                return "DISPENSING ITEM";
+            }
+            break;
+
+        case VENDING_HAS_50:
+            if (cents == 25) {
+                *state = VENDING_IDLE;
+                return "DISPENSING ITEM";
+            }
+            break;
+    }
+    return "Invalid coin";
+}
+\end{lstlisting}
+
+\section{Real-World Example: TCP Connection}
+
+TCP (Transmission Control Protocol) is one of the most famous real-world state machines. Understanding it helps you see how state machines model real protocols.
+
+The TCP connection lifecycle involves 11 states. Each state represents a specific phase of connection establishment, data transfer, or connection termination. The beauty of the state machine model is that it precisely defines what to do with each packet type in each state.
+
+For example, receiving a SYN (synchronize) packet in the CLOSED state means someone wants to connect, so you send SYN+ACK and move to SYN\_RECEIVED. But receiving SYN in the ESTABLISHED state is an error—connections are already established.
+
+This example shows how state machines are essential for implementing network protocols correctly. Without a clear state machine, protocol implementations become bug-ridden tangles of conditionals.
+
+\begin{lstlisting}
+typedef enum {
+    TCP_CLOSED,
+    TCP_LISTEN,
+    TCP_SYN_SENT,
+    TCP_SYN_RECEIVED,
+    TCP_ESTABLISHED,
+    TCP_FIN_WAIT_1,
+    TCP_FIN_WAIT_2,
+    TCP_CLOSE_WAIT,
+    TCP_CLOSING,
+    TCP_LAST_ACK,
+    TCP_TIME_WAIT
+} TCPState;
+
+typedef struct {
+    TCPState state;
+    int socket;
+} TCPConnection;
+
+void tcp_handle_packet(TCPConnection* conn, int flags) {
+    switch (conn->state) {
+        case TCP_CLOSED:
+            if (flags & SYN) {
+                send_syn_ack(conn->socket);
+                conn->state = TCP_SYN_RECEIVED;
+            }
+            break;
+
+        case TCP_SYN_SENT:
+            if (flags & (SYN | ACK)) {
+                send_ack(conn->socket);
+                conn->state = TCP_ESTABLISHED;
+            }
+            break;
+
+        case TCP_ESTABLISHED:
+            if (flags & FIN) {
+                send_ack(conn->socket);
+                conn->state = TCP_CLOSE_WAIT;
+            } else if (flags & ACK) {
+                // Handle data...
+            }
+            break;
+
+        case TCP_CLOSE_WAIT:
+            // User calls close()
+            send_fin(conn->socket);
+            conn->state = TCP_LAST_ACK;
+            break;
+
+        // ... more states
+    }
+}
+\end{lstlisting}
+
+\section{State Machine Debugging}
+
+Debugging state machines requires visibility into state transitions and the ability to validate transitions.
+
+Common debugging challenges:
+\begin{itemize}
+    \item \textbf{Invalid transitions}: How did we get to this impossible state?
+    \item \textbf{Missing transitions}: This event should do something but doesn't
+    \item \textbf{Race conditions}: Multiple threads changing state simultaneously
+    \item \textbf{Timing issues}: State changed too quickly or too slowly
+\end{itemize}
+
+The solutions are logging, validation, and visualization. Log every state transition with timestamps. Validate that transitions are legal. Generate diagrams showing the state machine structure.
+
+\textbf{Pro tip}: Add a "trace mode" that logs every event and transition. When a bug occurs, you can replay the trace to see exactly how the machine got into that state.
+
+\begin{lstlisting}
+// State name lookup for debugging
+const char* state_name(State s) {
+    static const char* names[] = {
+        "IDLE", "RUNNING", "PAUSED", "STOPPED"
+    };
+    return names[s];
+}
+
+// Logging state transitions
+void sm_set_state_debug(StateMachine* sm, State new_state) {
+    printf("[SM] %s -> %s\n",
+           state_name(sm->state),
+           state_name(new_state));
+    sm->state = new_state;
+}
+
+// Validate transitions
+int is_valid_transition(State from, State to) {
+    // Define valid transitions
+    static const int valid[][2] = {
+        {STATE_IDLE, STATE_RUNNING},
+        {STATE_RUNNING, STATE_PAUSED},
+        {STATE_PAUSED, STATE_RUNNING},
+        {STATE_RUNNING, STATE_STOPPED},
+        {STATE_PAUSED, STATE_STOPPED},
+    };
+
+    for (size_t i = 0; i < sizeof(valid) / sizeof(valid[0]); i++) {
+        if (valid[i][0] == from && valid[i][1] == to) {
+            return 1;
+        }
+    }
+    return 0;
+}
+\end{lstlisting}
+
+\section{Concurrent State Machines}
+
+Multiple state machines running in parallel—modeling objects with independent behaviors.
+
+Complex systems often have multiple orthogonal (independent) aspects of state. A game character can be walking AND attacking simultaneously—movement and combat are independent state machines.
+
+\textbf{Orthogonal states} mean that changes in one state machine don't affect the other. The character's movement state (idle, walking, running, jumping) is independent of their combat state (idle, attacking, blocking, stunned).
+
+However, you often need coordination between state machines. In the example below, the animation state machine depends on both movement and combat states, giving priority to combat animations.
+
+This pattern is common in:
+\begin{itemize}
+    \item Game engines (animation, physics, AI all have separate state)
+    \item UI systems (focus state, hover state, drag state are independent)
+    \item Embedded systems (sensor reading, motor control, communication are separate)
+\end{itemize}
+
+\begin{lstlisting}
+// Game character with independent state machines
+typedef struct {
+    // Movement state machine
+    enum {
+        MOVE_IDLE,
+        MOVE_WALKING,
+        MOVE_RUNNING,
+        MOVE_JUMPING
+    } movement_state;
+
+    // Combat state machine
+    enum {
+        COMBAT_IDLE,
+        COMBAT_ATTACKING,
+        COMBAT_BLOCKING,
+        COMBAT_STUNNED
+    } combat_state;
+
+    // Animation state machine
+    enum {
+        ANIM_IDLE,
+        ANIM_WALK,
+        ANIM_RUN,
+        ANIM_JUMP,
+        ANIM_ATTACK,
+        ANIM_BLOCK
+    } anim_state;
+} Character;
+
+// Update all state machines
+void character_update(Character* c, float dt) {
+    // Update movement
+    update_movement_sm(c, dt);
+
+    // Update combat (independent of movement)
+    update_combat_sm(c, dt);
+
+    // Animation depends on both movement and combat
+    update_animation_sm(c);
+}
+
+// Animation selects based on priority
+void update_animation_sm(Character* c) {
+    // Combat animations have priority
+    if (c->combat_state == COMBAT_ATTACKING) {
+        c->anim_state = ANIM_ATTACK;
+    } else if (c->combat_state == COMBAT_BLOCKING) {
+        c->anim_state = ANIM_BLOCK;
+    }
+    // Then movement animations
+    else if (c->movement_state == MOVE_RUNNING) {
+        c->anim_state = ANIM_RUN;
+    } else if (c->movement_state == MOVE_WALKING) {
+        c->anim_state = ANIM_WALK;
+    } else if (c->movement_state == MOVE_JUMPING) {
+        c->anim_state = ANIM_JUMP;
+    } else {
+        c->anim_state = ANIM_IDLE;
+    }
+}
+\end{lstlisting}
+
+\section{Pushdown Automaton}
+
+State machines with a stack for nested states—a more powerful computational model.
+
+A \textbf{pushdown automaton} (PDA) is a state machine augmented with a stack. This allows it to remember an arbitrary amount of information, making it more powerful than a finite state machine.
+
+PDAs are perfect for:
+\begin{itemize}
+    \item Menu systems (main → options → graphics → advanced, then back out)
+    \item Expression parsing (matching parentheses)
+    \item Function call stacks
+    \item Undo/redo that preserves full state
+    \item Hierarchical navigation
+\end{itemize}
+
+The stack remembers "where you came from," allowing you to return to previous contexts. This is more powerful than simple history because each state can be entered from multiple previous states.
+
+Think of it like a web browser's back button—it remembers the full navigation path, not just the previous page.
+
+\begin{lstlisting}
+#define STATE_STACK_SIZE 16
+
+typedef struct {
+    State stack[STATE_STACK_SIZE];
+    int top;
+} StateStack;
+
+void stack_push(StateStack* s, State state) {
+    if (s->top < STATE_STACK_SIZE - 1) {
+        s->stack[++s->top] = state;
+    }
+}
+
+State stack_pop(StateStack* s) {
+    if (s->top >= 0) {
+        return s->stack[s->top--];
+    }
+    return STATE_INVALID;
+}
+
+State stack_peek(StateStack* s) {
+    if (s->top >= 0) {
+        return s->stack[s->top];
+    }
+    return STATE_INVALID;
+}
+
+// Menu system with state stack
+typedef enum {
+    MENU_MAIN,
+    MENU_OPTIONS,
+    MENU_GRAPHICS,
+    MENU_AUDIO,
+    MENU_CONTROLS,
+    MENU_CONFIRM_EXIT
+} MenuState;
+
+typedef struct {
+    StateStack states;
+} MenuSystem;
+
+void menu_init(MenuSystem* menu) {
+    menu->states.top = -1;
+    stack_push(&menu->states, MENU_MAIN);
+}
+
+void menu_enter_submenu(MenuSystem* menu, MenuState state) {
+    stack_push(&menu->states, state);
+    printf("Entering menu: %d\n", state);
+}
+
+void menu_go_back(MenuSystem* menu) {
+    if (menu->states.top > 0) {  // Keep at least one state
+        State old = stack_pop(&menu->states);
+        State current = stack_peek(&menu->states);
+        printf("Back from %d to %d\n", old, current);
+    }
+}
+
+MenuState menu_current(MenuSystem* menu) {
+    return stack_peek(&menu->states);
+}
+
+// Usage
+// Main Menu -> Options -> Graphics -> (back) -> Options -> (back) -> Main
+\end{lstlisting}
+
+\section{Event Queue State Machine}
+
+Process events from a queue for better control—decoupling event generation from event processing.
+
+\textbf{Why use an event queue?}
+
+\begin{itemize}
+    \item \textbf{Decoupling}: Event producers don't need to know about the state machine
+    \item \textbf{Ordering}: Events are processed in a predictable order
+    \item \textbf{Rate limiting}: Control how many events to process per frame
+    \item \textbf{Replay}: Save and replay event sequences for testing
+    \item \textbf{Thread safety}: Only one thread processes the queue
+\end{itemize}
+
+This pattern is essential in event-driven architectures like GUI systems, game engines, and embedded systems. Events are posted to the queue from anywhere (user input, network, timers), and the state machine processes them at a controlled rate.
+
+\textbf{Important}: Decide what happens when the queue fills up. Drop old events? Drop new events? Block the producer? The right answer depends on your application.
+
+\begin{lstlisting}
+#define EVENT_QUEUE_SIZE 64
+
+typedef struct {
+    int type;
+    void* data;
+} Event;
+
+typedef struct {
+    Event events[EVENT_QUEUE_SIZE];
+    int read_pos;
+    int write_pos;
+    int count;
+} EventQueue;
+
+void event_queue_init(EventQueue* q) {
+    q->read_pos = 0;
+    q->write_pos = 0;
+    q->count = 0;
+}
+
+int event_queue_push(EventQueue* q, Event event) {
+    if (q->count >= EVENT_QUEUE_SIZE) {
+        return -1;  // Queue full
+    }
+
+    q->events[q->write_pos] = event;
+    q->write_pos = (q->write_pos + 1) % EVENT_QUEUE_SIZE;
+    q->count++;
+    return 0;
+}
+
+int event_queue_pop(EventQueue* q, Event* event) {
+    if (q->count == 0) {
+        return -1;  // Queue empty
+    }
+
+    *event = q->events[q->read_pos];
+    q->read_pos = (q->read_pos + 1) % EVENT_QUEUE_SIZE;
+    q->count--;
+    return 0;
+}
+
+// State machine with event queue
+typedef struct {
+    State state;
+    EventQueue queue;
+} QueuedStateMachine;
+
+void sm_post_event(QueuedStateMachine* sm, int type, void* data) {
+    Event e = {.type = type, .data = data};
+    event_queue_push(&sm->queue, e);
+}
+
+void sm_process_events(QueuedStateMachine* sm) {
+    Event e;
+    while (event_queue_pop(&sm->queue, &e) == 0) {
+        // Process event based on current state
+        switch (sm->state) {
+            case STATE_IDLE:
+                if (e.type == EVENT_START) {
+                    sm->state = STATE_RUNNING;
+                }
+                break;
+
+            case STATE_RUNNING:
+                if (e.type == EVENT_STOP) {
+                    sm->state = STATE_IDLE;
+                }
+                break;
+        }
+
+        // Free event data if needed
+        if (e.data) {
+            free(e.data);
+        }
+    }
+}
+\end{lstlisting}
+
+\section{Guard Conditions}
+
+Add conditions to state transitions—making transitions conditional on runtime state.
+
+Sometimes a transition should only occur if certain conditions are met. For example:
+\begin{itemize}
+    \item Only allow checkout if cart has items and user has payment method
+    \item Only allow file deletion if user has permission
+    \item Only allow engine start if safety checks pass
+\end{itemize}
+
+\textbf{Guard conditions} are boolean functions evaluated before a transition. If the guard returns false, the transition is blocked, and the state machine remains in its current state.
+
+This keeps your state machine declarative—the transition table says "when X happens IF condition Y, go to state Z." Without guards, you'd need separate states for every combination of conditions, leading to state explosion.
+
+Guards vs. events: Events are external stimuli. Guards are internal conditions. Both are needed for flexible, real-world state machines.
+
+\begin{lstlisting}
+typedef struct {
+    State from_state;
+    int event;
+    State to_state;
+    int (*guard)(void* context);  // Condition function
+    void (*action)(void* context);
+} GuardedTransition;
+
+// Guard functions
+int has_permission(void* context) {
+    User* user = (User*)context;
+    return user->is_admin;
+}
+
+int has_enough_money(void* context) {
+    Account* acc = (Account*)context;
+    return acc->balance >= 100;
+}
+
+// Transition table with guards
+GuardedTransition transitions[] = {
+    {STATE_MENU, EVENT_ADMIN, STATE_ADMIN_PANEL, has_permission, NULL},
+    {STATE_CART, EVENT_CHECKOUT, STATE_PAYMENT, has_enough_money, NULL},
+    {STATE_IDLE, EVENT_START, STATE_RUNNING, NULL, start_engine},
+};
+
+int sm_handle_guarded_event(StateMachine* sm, int event, void* context) {
+    for (size_t i = 0; i < sizeof(transitions)/sizeof(GuardedTransition); i++) {
+        GuardedTransition* t = &transitions[i];
+
+        if (t->from_state == sm->state && t->event == event) {
+            // Check guard condition
+            if (t->guard == NULL || t->guard(context)) {
+                sm->state = t->to_state;
+
+                if (t->action) {
+                    t->action(context);
+                }
+
+                return 0;  // Transition succeeded
+            } else {
+                return -1;  // Guard failed
+            }
+        }
+    }
+
+    return -2;  // No matching transition
+}
+\end{lstlisting}
+
+\section{State Machine Code Generation}
+
+Generate state machine code from a table—reducing boilerplate and ensuring consistency.
+
+Writing state machine code by hand is tedious and error-prone. You need:
+\begin{itemize}
+    \item State enum definitions
+    \item State name strings for debugging
+    \item Entry action function declarations
+    \item Exit action function declarations
+    \item Action function arrays
+    \item Transition logic
+\end{itemize}
+
+The X-macro technique lets you define your state machine once and generate all this boilerplate automatically. Change the state list in one place, and all the generated code updates automatically.
+
+This is similar to how parser generators (like yacc/bison) generate code from grammar specifications. You describe \textit{what} the state machine is, and the macro system generates \textit{how} to implement it.
+
+\textbf{Bonus}: With external tools, you can generate state machines from visual diagrams or XML specifications, making them accessible to non-programmers.
+
+\begin{lstlisting}
+// State machine description (could be from a file)
+#define STATE_MACHINE_DEF \
+    X(IDLE,      "Idle",      on_enter_idle,   on_exit_idle) \
+    X(STARTING,  "Starting",  on_enter_starting, NULL) \
+    X(RUNNING,   "Running",   on_enter_running, on_exit_running) \
+    X(STOPPING,  "Stopping",  on_enter_stopping, NULL) \
+    X(ERROR,     "Error",     on_enter_error,  NULL)
+
+// Generate enum
+typedef enum {
+#define X(name, str, enter, exit) STATE_##name,
+    STATE_MACHINE_DEF
+#undef X
+    STATE_COUNT
+} State;
+
+// Generate string table
+static const char* state_names[] = {
+#define X(name, str, enter, exit) str,
+    STATE_MACHINE_DEF
+#undef X
+};
+
+// Forward declare action functions
+#define X(name, str, enter, exit) \
+    void enter(void* ctx); \
+    void exit(void* ctx);
+STATE_MACHINE_DEF
+#undef X
+
+// Entry action table
+typedef void (*StateAction)(void* ctx);
+
+static StateAction entry_actions[] = {
+#define X(name, str, enter, exit) enter,
+    STATE_MACHINE_DEF
+#undef X
+};
+
+static StateAction exit_actions[] = {
+#define X(name, str, enter, exit) exit,
+    STATE_MACHINE_DEF
+#undef X
+};
+
+// Transition with actions
+void sm_transition(StateMachine* sm, State new_state, void* ctx) {
+    // Exit current state
+    if (exit_actions[sm->state]) {
+        exit_actions[sm->state](ctx);
+    }
+
+    printf("Transition: %s -> %s\n",
+           state_names[sm->state],
+           state_names[new_state]);
+
+    sm->state = new_state;
+
+    // Enter new state
+    if (entry_actions[new_state]) {
+        entry_actions[new_state](ctx);
+    }
+}
+\end{lstlisting}
+
+\section{Real-World Example: Protocol Parser}
+
+HTTP request parser as a state machine—a practical example of character-by-character parsing.
+
+Parsing text-based protocols like HTTP is a perfect application for state machines. Each character advances the machine through states representing different parts of the request:
+
+\begin{enumerate}
+    \item START → METHOD (reading "GET", "POST", etc.)
+    \item METHOD → URI (reading "/path/to/resource")
+    \item URI → VERSION (reading "HTTP/1.1")
+    \item VERSION → HEADER\_NAME (reading "Content-Type")
+    \item HEADER\_NAME → HEADER\_VALUE (reading "application/json")
+    \item Repeat headers until blank line
+    \item HEADER\_NAME → BODY (blank line signals end of headers)
+    \item BODY → DONE (message complete)
+\end{enumerate}
+
+This approach is extremely efficient—each character is examined once, no backtracking, no complex string operations. The state machine enforces the protocol grammar, automatically rejecting malformed requests.
+
+Many high-performance servers (nginx, nodejs http-parser) use state machine parsers for this reason.
+
+\begin{lstlisting}
+typedef enum {
+    HTTP_START,
+    HTTP_METHOD,
+    HTTP_URI,
+    HTTP_VERSION,
+    HTTP_HEADER_NAME,
+    HTTP_HEADER_VALUE,
+    HTTP_BODY,
+    HTTP_DONE,
+    HTTP_ERROR
+} HTTPParseState;
+
+typedef struct {
+    HTTPParseState state;
+
+    // Parsed data
+    char method[16];
+    char uri[256];
+    char version[16];
+    char headers[32][2][256];  // name/value pairs
+    int header_count;
+    char* body;
+    size_t body_length;
+
+    // Parsing buffers
+    char buffer[1024];
+    size_t buffer_pos;
+} HTTPParser;
+
+void http_parser_init(HTTPParser* p) {
+    memset(p, 0, sizeof(*p));
+    p->state = HTTP_START;
+}
+
+int http_parser_feed(HTTPParser* p, char c) {
+    switch (p->state) {
+        case HTTP_START:
+            if (isalpha(c)) {
+                p->buffer[0] = c;
+                p->buffer_pos = 1;
+                p->state = HTTP_METHOD;
+            } else if (!isspace(c)) {
+                p->state = HTTP_ERROR;
+                return -1;
+            }
+            break;
+
+        case HTTP_METHOD:
+            if (isalpha(c)) {
+                p->buffer[p->buffer_pos++] = c;
+            } else if (c == ' ') {
+                p->buffer[p->buffer_pos] = '\0';
+                strcpy(p->method, p->buffer);
+                p->buffer_pos = 0;
+                p->state = HTTP_URI;
+            } else {
+                p->state = HTTP_ERROR;
+                return -1;
+            }
+            break;
+
+        case HTTP_URI:
+            if (c == ' ') {
+                p->buffer[p->buffer_pos] = '\0';
+                strcpy(p->uri, p->buffer);
+                p->buffer_pos = 0;
+                p->state = HTTP_VERSION;
+            } else if (!iscntrl(c)) {
+                p->buffer[p->buffer_pos++] = c;
+            } else {
+                p->state = HTTP_ERROR;
+                return -1;
+            }
+            break;
+
+        case HTTP_VERSION:
+            if (c == '\r') {
+                // Ignore
+            } else if (c == '\n') {
+                p->buffer[p->buffer_pos] = '\0';
+                strcpy(p->version, p->buffer);
+                p->buffer_pos = 0;
+                p->state = HTTP_HEADER_NAME;
+            } else {
+                p->buffer[p->buffer_pos++] = c;
+            }
+            break;
+
+        case HTTP_HEADER_NAME:
+            if (c == '\r') {
+                // Ignore
+            } else if (c == '\n') {
+                if (p->buffer_pos == 0) {
+                    // Empty line - end of headers
+                    p->state = HTTP_BODY;
+                } else {
+                    p->state = HTTP_ERROR;
+                    return -1;
+                }
+            } else if (c == ':') {
+                p->buffer[p->buffer_pos] = '\0';
+                strcpy(p->headers[p->header_count][0], p->buffer);
+                p->buffer_pos = 0;
+                p->state = HTTP_HEADER_VALUE;
+            } else {
+                p->buffer[p->buffer_pos++] = c;
+            }
+            break;
+
+        case HTTP_HEADER_VALUE:
+            if (c == '\r') {
+                // Ignore
+            } else if (c == '\n') {
+                p->buffer[p->buffer_pos] = '\0';
+                strcpy(p->headers[p->header_count][1], p->buffer);
+                p->header_count++;
+                p->buffer_pos = 0;
+                p->state = HTTP_HEADER_NAME;
+            } else if (c == ' ' && p->buffer_pos == 0) {
+                // Skip leading space
+            } else {
+                p->buffer[p->buffer_pos++] = c;
+            }
+            break;
+
+        case HTTP_BODY:
+            // Body parsing depends on Content-Length header
+            p->state = HTTP_DONE;
+            break;
+
+        case HTTP_DONE:
+            return 1;  // Complete
+
+        case HTTP_ERROR:
+            return -1;
+    }
+
+    return 0;  // Continue
+}
+
+// Usage
+HTTPParser parser;
+http_parser_init(&parser);
+
+const char* request = "GET /index.html HTTP/1.1\r\n"
+                     "Host: example.com\r\n"
+                     "User-Agent: MyClient/1.0\r\n"
+                     "\r\n";
+
+for (size_t i = 0; request[i]; i++) {
+    int result = http_parser_feed(&parser, request[i]);
+    if (result != 0) break;
+}
+
+printf("Method: %s\n", parser.method);
+printf("URI: %s\n", parser.uri);
+\end{lstlisting}
+
+\section{Real-World Example: Game AI}
+
+Enemy AI with behavior states—implementing intelligent NPC behavior.
+
+Game AI is often implemented as state machines where each state represents a different behavior:
+
+\begin{itemize}
+    \item \textbf{PATROL}: Default behavior, following waypoints
+    \item \textbf{INVESTIGATE}: Heard something, checking it out
+    \item \textbf{CHASE}: Found the player, pursuing
+    \item \textbf{ATTACK}: Close enough, attacking
+    \item \textbf{FLEE}: Low health, running away
+    \item \textbf{SEARCH}: Lost track of player, searching area
+\end{itemize}
+
+The beauty is in the transitions. The AI feels intelligent because it reacts appropriately to stimuli:
+\begin{itemize}
+    \item Spots player while patrolling → investigate
+    \item Gets close while investigating → chase
+    \item Gets very close while chasing → attack
+    \item Health drops too low → flee
+    \item Loses sight of player → search
+    \item Can't find player after searching → give up, resume patrol
+\end{itemize}
+
+This creates believable, fun-to-fight enemies without complex algorithms. Add some randomness to transitions, and each encounter feels different.
+
+\begin{lstlisting}
+typedef enum {
+    AI_PATROL,
+    AI_INVESTIGATE,
+    AI_CHASE,
+    AI_ATTACK,
+    AI_FLEE,
+    AI_SEARCH
+} AIState;
+
+typedef struct {
+    AIState state;
+    float state_timer;
+
+    // AI memory
+    Vector3 last_known_player_pos;
+    float time_since_seen_player;
+    float health;
+    Vector3 patrol_points[4];
+    int current_patrol_point;
+} EnemyAI;
+
+void ai_update(EnemyAI* ai, Player* player, float dt) {
+    ai->state_timer += dt;
+
+    float distance = vector3_distance(ai->position, player->position);
+    bool can_see_player = line_of_sight(ai->position, player->position);
+
+    switch (ai->state) {
+        case AI_PATROL:
+            // Move to patrol points
+            move_towards(ai, ai->patrol_points[ai->current_patrol_point]);
+
+            if (reached_point(ai)) {
+                ai->current_patrol_point =
+                    (ai->current_patrol_point + 1) % 4;
+            }
+
+            // Spot player
+            if (can_see_player && distance < 30.0f) {
+                ai->last_known_player_pos = player->position;
+                ai->state = AI_INVESTIGATE;
+                ai->state_timer = 0;
+            }
+            break;
+
+        case AI_INVESTIGATE:
+            // Move to last known position
+            move_towards(ai, ai->last_known_player_pos);
+
+            if (can_see_player) {
+                ai->last_known_player_pos = player->position;
+
+                if (distance < 10.0f) {
+                    ai->state = AI_CHASE;
+                    ai->state_timer = 0;
+                }
+            } else if (reached_point(ai) || ai->state_timer > 5.0f) {
+                // Lost track
+                ai->state = AI_SEARCH;
+                ai->state_timer = 0;
+            }
+            break;
+
+        case AI_CHASE:
+            if (can_see_player) {
+                ai->last_known_player_pos = player->position;
+                move_towards(ai, player->position);
+
+                if (distance < 2.0f) {
+                    ai->state = AI_ATTACK;
+                    ai->state_timer = 0;
+                }
+
+                // Low health - flee
+                if (ai->health < 30.0f) {
+                    ai->state = AI_FLEE;
+                    ai->state_timer = 0;
+                }
+            } else {
+                // Lost sight
+                ai->state = AI_INVESTIGATE;
+                ai->state_timer = 0;
+            }
+            break;
+
+        case AI_ATTACK:
+            look_at(ai, player->position);
+
+            if (ai->state_timer > 1.0f) {  // Attack cooldown
+                perform_attack(ai);
+                ai->state_timer = 0;
+            }
+
+            if (distance > 3.0f) {
+                ai->state = AI_CHASE;
+            }
+
+            if (ai->health < 30.0f) {
+                ai->state = AI_FLEE;
+                ai->state_timer = 0;
+            }
+            break;
+
+        case AI_FLEE:
+            // Run away from player
+            Vector3 flee_dir = vector3_sub(ai->position, player->position);
+            flee_dir = vector3_normalize(flee_dir);
+            move_in_direction(ai, flee_dir);
+
+            if (distance > 50.0f) {
+                // Escaped
+                ai->state = AI_SEARCH;
+                ai->state_timer = 0;
+            }
+            break;
+
+        case AI_SEARCH:
+            // Search area for player
+            wander(ai);
+
+            if (can_see_player) {
+                ai->last_known_player_pos = player->position;
+                ai->state = AI_INVESTIGATE;
+                ai->state_timer = 0;
+            } else if (ai->state_timer > 10.0f) {
+                // Give up
+                ai->state = AI_PATROL;
+                ai->state_timer = 0;
+            }
+            break;
+    }
+}
+\end{lstlisting}
+
+\section{State Machine Testing}
+
+Testing state machines systematically—ensuring all transitions work correctly.
+
+State machines are highly testable because their behavior is deterministic: given a starting state and a sequence of events, the final state is predictable.
+
+\textbf{Testing strategies}:
+\begin{itemize}
+    \item \textbf{Transition coverage}: Test every valid transition at least once
+    \item \textbf{Invalid transition testing}: Verify invalid transitions are rejected
+    \item \textbf{State coverage}: Exercise all states
+    \item \textbf{Sequence testing}: Test common event sequences
+    \item \textbf{Stress testing}: Rapid transitions, deep nesting, long-running states
+\end{itemize}
+
+The test framework shown here lets you define test cases as data: initial state, event sequence, expected final state. Run all tests automatically and catch regressions.
+
+\textbf{Advanced testing}: Generate random valid event sequences and verify the state machine never enters an invalid state. This is called \textbf{fuzzing} and catches edge cases you didn't think of.
+
+\begin{lstlisting}
+// Test framework for state machines
+typedef struct {
+    const char* name;
+    State initial_state;
+    int events[10];
+    int num_events;
+    State expected_final_state;
+} StateTest;
+
+int run_state_test(StateTest* test) {
+    StateMachine sm = {.state = test->initial_state};
+
+    printf("Running test: %s\n", test->name);
+
+    for (int i = 0; i < test->num_events; i++) {
+        printf("  Event %d: %d\n", i, test->events[i]);
+        sm_handle_event(&sm, test->events[i]);
+        printf("  State: %s\n", state_name(sm.state));
+    }
+
+    if (sm.state == test->expected_final_state) {
+        printf("  PASS\n");
+        return 0;
+    } else {
+        printf("  FAIL: Expected %s, got %s\n",
+               state_name(test->expected_final_state),
+               state_name(sm.state));
+        return -1;
+    }
+}
+
+// Test cases
+StateTest tests[] = {
+    {
+        .name = "Normal startup",
+        .initial_state = STATE_OFF,
+        .events = {EVENT_POWER_ON, EVENT_START},
+        .num_events = 2,
+        .expected_final_state = STATE_RUNNING
+    },
+    {
+        .name = "Emergency stop",
+        .initial_state = STATE_RUNNING,
+        .events = {EVENT_EMERGENCY_STOP},
+        .num_events = 1,
+        .expected_final_state = STATE_ERROR
+    },
+    // More tests...
+};
+
+void run_all_tests(void) {
+    int passed = 0;
+    int total = sizeof(tests) / sizeof(StateTest);
+
+    for (int i = 0; i < total; i++) {
+        if (run_state_test(&tests[i]) == 0) {
+            passed++;
+        }
+    }
+
+    printf("\nTests: %d/%d passed\n", passed, total);
+}
+\end{lstlisting}
+
+\section{State Machine Visualization}
+
+Generate GraphViz diagrams—making state machines visible and understandable.
+
+A picture is worth a thousand lines of code. State diagrams show:
+\begin{itemize}
+    \item All states (nodes)
+    \item All transitions (edges)
+    \item Transition triggers (edge labels)
+    \item Overall structure at a glance
+\end{itemize}
+
+GraphViz is perfect for this—it automatically layouts the diagram so you don't have to position nodes manually. The DOT language is simple: define nodes, define edges with labels, done.
+
+\textbf{Use cases}:
+\begin{itemize}
+    \item \textbf{Documentation}: Include diagrams in your manual
+    \item \textbf{Code review}: Visualize before implementing
+    \item \textbf{Debugging}: See if actual transitions match expected
+    \item \textbf{Communication}: Show designers/stakeholders how it works
+\end{itemize}
+
+You can even generate diagrams automatically from your code's transition table, ensuring documentation never gets out of sync with implementation.
+
+\begin{lstlisting}
+void sm_generate_dot(FILE* f) {
+    fprintf(f, "digraph StateMachine {\n");
+    fprintf(f, "  rankdir=LR;\n");
+    fprintf(f, "  node [shape=circle];\n\n");
+
+    // Define states
+    for (int i = 0; i < STATE_COUNT; i++) {
+        fprintf(f, "  %s [label=\"%s\"];\n",
+                state_name(i), state_name(i));
+    }
+
+    fprintf(f, "\n");
+
+    // Define transitions
+    for (size_t i = 0; i < num_transitions; i++) {
+        fprintf(f, "  %s -> %s [label=\"%s\"];\n",
+                state_name(transitions[i].from),
+                state_name(transitions[i].to),
+                event_name(transitions[i].event));
+    }
+
+    fprintf(f, "}\n");
+}
+
+// Usage:
+// FILE* f = fopen("statemachine.dot", "w");
+// sm_generate_dot(f);
+// fclose(f);
+// system("dot -Tpng statemachine.dot -o statemachine.png");
+\end{lstlisting}
+
+\section{Performance Considerations}
+
+Optimizing state machines for high-performance applications—when millions of transitions per second matter.
+
+Most state machines are fast enough without optimization. But in hot paths (game loops, packet processing, real-time systems), performance matters.
+
+\textbf{Optimization techniques}:
+\begin{itemize}
+    \item \textbf{Direct table lookup}: O(1) transitions instead of searching
+    \item \textbf{Perfect hashing}: Hash state+event to array index
+    \item \textbf{Jump tables}: Compiler generates efficient code for switch statements
+    \item \textbf{Cache-friendly layout}: Keep state data in one cache line
+    \item \textbf{Avoid function pointers}: Direct calls are faster than indirect
+\end{itemize}
+
+The table-based approach shown here trades memory for speed. If you have 32 states and 32 events, you need a 32×32 table (1KB). But each lookup is just two array accesses—no searching, no function calls.
+
+\textbf{Measurement matters}: Profile before optimizing. Most state machines aren't bottlenecks. But when they are, these techniques can speed them up 10-100×.
+
+\begin{lstlisting}
+// Optimize state transitions with perfect hashing
+typedef struct {
+    State state;
+    int event;
+} StateEventKey;
+
+// Hash function for state/event pair
+static inline unsigned int hash_state_event(State s, int e) {
+    return (s << 8) | e;
+}
+
+// Direct lookup table (if state/event space is small)
+#define MAX_STATES 32
+#define MAX_EVENTS 32
+
+static State transition_table[MAX_STATES][MAX_EVENTS];
+
+void init_transition_table(void) {
+    // Initialize with invalid transitions
+    for (int i = 0; i < MAX_STATES; i++) {
+        for (int j = 0; j < MAX_EVENTS; j++) {
+            transition_table[i][j] = STATE_INVALID;
+        }
+    }
+
+    // Fill in valid transitions
+    transition_table[STATE_IDLE][EVENT_START] = STATE_RUNNING;
+    transition_table[STATE_RUNNING][EVENT_STOP] = STATE_IDLE;
+    // etc...
+}
+
+// O(1) transition lookup
+State fast_transition(State current, int event) {
+    if (current < MAX_STATES && event < MAX_EVENTS) {
+        return transition_table[current][event];
+    }
+    return STATE_INVALID;
+}
+
+// Cache-friendly state machine for high-performance
+typedef struct {
+    State state;
+    uint32_t padding;  // Align to cache line
+} __attribute__((aligned(64))) CacheFriendlySM;
+\end{lstlisting}
+
+\section{Summary}
+
+State machines in C:
+
+\begin{itemize}
+    \item Use enums for states—clear and type-safe
+    \item Switch-based for simple state machines
+    \item Function pointers for flexible behavior
+    \item Tables for complex transition logic
+    \item Add entry/exit actions for cleaner code
+    \item Track state history for undo/back functionality
+    \item Use guard conditions for conditional transitions
+    \item Event queues for better event handling
+    \item Concurrent state machines for complex objects
+    \item Pushdown automata for hierarchical states
+    \item Always validate state transitions
+    \item Log transitions for debugging
+    \item Generate visualizations for documentation
+    \item Test thoroughly with automated test cases
+    \item Optimize hot paths with direct lookup tables
+\end{itemize}
+
+State machines turn complex behavior into manageable, testable code. Master them and your code will be more reliable and easier to understand!

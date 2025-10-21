@@ -1,0 +1,101 @@
+# LaTeX auxiliary files
+*.aux
+*.lof
+*.log
+*.lot
+*.fls
+*.out
+*.toc
+*.fmt
+*.fot
+*.cb
+*.cb2
+.*.lb
+
+# Intermediate documents
+*.dvi
+*.xdv
+*-converted-to.*
+
+# Bibliography files
+*.bbl
+*.bcf
+*.blg
+*-blx.aux
+*-blx.bib
+*.run.xml
+
+# Build tool auxiliary files
+*.fdb_latexmk
+*.synctex
+*.synctex(busy)
+*.synctex.gz
+*.synctex.gz(busy)
+*.pdfsync
+
+# Build directories
+build/
+dist/
+output/
+
+# Index files
+*.idx
+*.ilg
+*.ind
+
+# Hyperref
+*.brf
+
+# Knitr
+*-concordance.tex
+
+# Listings
+*.lol
+
+# Nomenclature
+*.nlg
+*.nlo
+*.nls
+
+# PDF outputs (comment out if you want to track PDFs)
+# main.pdf
+# *.pdf
+
+# Compressed versions
+*_compressed.pdf
+
+# EPUB/MOBI outputs
+*.epub
+*.mobi
+
+# macOS
+.DS_Store
+._*
+
+# Linux
+*~
+.directory
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Temp files
+tmp/
+temp/
+*.tmp

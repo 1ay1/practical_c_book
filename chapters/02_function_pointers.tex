@@ -1,0 +1,1168 @@
+\chapter{Function Pointers \& Callbacks}
+
+\section{What Are Function Pointers, Really?}
+
+In C, functions aren't just code—they're stored at memory addresses just like variables. A function pointer is a variable that stores the address of a function, allowing you to call different functions dynamically.
+
+But here's what they don't teach in school: function pointers are how C achieves late binding without a virtual machine. They're how the Linux kernel implements system calls, how qsort can sort anything, how GUI frameworks handle events, and how game engines implement component systems. Basically, they're C's way of saying "I can be flexible too!" (Without needing a garbage collector, thank you very much.)
+
+Think of it like a remote control. Instead of hardwiring which TV channel to display, you can change channels at runtime by pressing different buttons. Except if you press the wrong button, you get a segfault instead of infomercials. Pick your poison.
+
+\section{What Happens at the Assembly Level}
+
+Let's demystify what's really happening:
+
+\begin{lstlisting}
+// Simple function
+int add(int a, int b) {
+    return a + b;
+}
+
+// Function pointer
+int (*operation)(int, int);
+operation = add;
+int result = operation(5, 3);
+
+// What the compiler generates (x86-64, simplified):
+//
+// add function:
+//   Address: 0x400500
+//   Code:    mov eax, edi      ; a in edi
+//            add eax, esi      ; b in esi
+//            ret               ; return
+//
+// operation = add:
+//   mov qword [rbp-8], 0x400500  ; Store address
+//
+// operation(5, 3):
+//   mov edi, 5              ; First argument
+//   mov esi, 3              ; Second argument
+//   call qword [rbp-8]      ; INDIRECT call to address
+//
+// Direct call:    call 0x400500     ; 5 bytes, 1 cycle
+// Indirect call:  call qword [mem]  ; slower, prevents inlining
+//
+// This is why function pointers are slightly slower!
+\end{lstlisting}
+
+\begin{notebox}
+Function pointers prevent the compiler from inlining. A direct call to \texttt{add(5, 3)} can be optimized to a constant 8. A call through a function pointer cannot, because the compiler doesn't know what function will be called until runtime. It's like trying to optimize a surprise party—you can't plan if you don't know who's showing up.
+\end{notebox}
+
+\section{Basic Syntax: Reading the Declaration}
+
+Function pointer syntax is notoriously confusing. Here's the secret:
+
+\begin{lstlisting}
+// A simple function
+int add(int a, int b) {
+    return a + b;
+}
+
+// Function pointer declaration - read it right-to-left, inside-out
+int (*operation)(int, int);
+//      ^           ^    ^
+//      |           |    +--- returns int
+//      |           +-------- takes (int, int)
+//      +-------------------- operation is a POINTER TO function
+
+// Common mistakes:
+int *operation(int, int);    // WRONG! This is a function returning int*
+int (*operation[10])(int);   // Array of 10 function pointers
+int *(*operation)(int);      // Function pointer returning int*
+
+// Assign and use
+operation = add;              // Store address of add
+operation = &add;             // Same thing (& is optional)
+int result = operation(5, 3); // Call through pointer
+result = (*operation)(5, 3);  // Same thing (* is optional)
+\end{lstlisting}
+
+\begin{notebox}
+Reading function pointers: Start from the variable name and work outward. \texttt{(*operation)} means "operation is a pointer to..." and \texttt{(int, int)} means "...a function taking two ints and returning int." If this feels like reading hieroglyphics, you're not alone. Even Dennis Ritchie admitted the syntax is a bit wonky.
+\end{notebox}
+
+\section{Typedef Makes It Readable}
+
+Function pointer syntax can get messy. Use \texttt{typedef} to make it cleaner:
+
+\begin{lstlisting}
+// Without typedef - hard to read
+void register_callback(void (*callback)(int, const char*));
+
+// With typedef - much better
+typedef void (*MessageCallback)(int code, const char* msg);
+void register_callback(MessageCallback callback);
+
+// Even complex cases become readable
+typedef int (*CompareFn)(const void*, const void*);
+typedef void (*DestructorFn)(void*);
+typedef void* (*AllocatorFn)(size_t);
+typedef int (*FilterFn)(void* item, void* context);
+
+// Real-world pattern: OpenGL callbacks
+typedef void (*GLDEBUGPROC)(GLenum source, GLenum type,
+                            GLuint id, GLenum severity,
+                            GLsizei length, const GLchar* message,
+                            const void* userParam);
+
+// Without typedef, this would be unreadable!
+\end{lstlisting}
+
+\section{Callbacks: The Power Pattern}
+
+Callbacks are functions you pass to other functions. This is how C achieves "customizable behavior" without objects.
+
+\subsection{Example: Custom Sorting}
+
+The standard library's \texttt{qsort} is a perfect example:
+
+\begin{lstlisting}
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+
+// Comparison function for qsort
+// Must return: <0 if a<b, 0 if a==b, >0 if a>b
+int compare_ints(const void* a, const void* b) {
+    int arg1 = *(const int*)a;
+    int arg2 = *(const int*)b;
+
+    // Simple but has a subtle bug - can overflow!
+    // return arg1 - arg2;
+
+    // Correct implementation:
+    if (arg1 < arg2) return -1;
+    if (arg1 > arg2) return 1;
+    return 0;
+}
+
+// Reverse comparison
+int compare_ints_reverse(const void* a, const void* b) {
+    return compare_ints(b, a);  // Just swap arguments
+}
+
+// Case-insensitive string comparison
+int compare_strings_icase(const void* a, const void* b) {
+    const char* str1 = *(const char**)a;
+    const char* str2 = *(const char**)b;
+    return strcasecmp(str1, str2);
+}
+
+// Sort by string length
+int compare_by_length(const void* a, const void* b) {
+    const char* str1 = *(const char**)a;
+    const char* str2 = *(const char**)b;
+    size_t len1 = strlen(str1);
+    size_t len2 = strlen(str2);
+
+    if (len1 < len2) return -1;
+    if (len1 > len2) return 1;
+    return strcmp(str1, str2);  // Secondary sort by content
+}
+
+int main(void) {
+    int arr[] = {5, 2, 9, 1, 7};
+    int n = 5;
+
+    // Sort ascending - same qsort, different callback
+    qsort(arr, n, sizeof(int), compare_ints);
+
+    // Sort descending - same qsort, different callback
+    qsort(arr, n, sizeof(int), compare_ints_reverse);
+
+    // One qsort implementation, infinite sorting strategies!
+    // This is the Strategy pattern from Gang of Four
+
+    return 0;
+}
+\end{lstlisting}
+
+\begin{warningbox}
+The classic bug: \texttt{return a - b} overflows! If \texttt{a = INT\_MAX} and \texttt{b = -1}, the subtraction wraps around to negative. Always use explicit comparisons for numeric types! This bug has probably cost humanity more cumulative debugging hours than we spent building the pyramids.
+\end{warningbox}
+
+\section{The User Data Pattern (The Secret Sauce)}
+
+A critical idiom: passing context to callbacks using \texttt{void* user\_data}:
+
+\begin{lstlisting}
+// WITHOUT user_data - limited and broken
+typedef void (*SimpleCallback)(void);
+
+int global_sum = 0;  // BAD! Global state
+int global_count = 0;
+
+void accumulate_bad(void) {
+    // How do we access the current item?
+    // We can't! No parameters!
+    global_sum += ???;  // What value?
+    global_count++;
+}
+
+// WITH user_data - powerful and correct
+typedef void (*Callback)(int value, void* user_data);
+
+void process_items(int* items, size_t count,
+                   Callback handler, void* user_data) {
+    for (size_t i = 0; i < count; i++) {
+        handler(items[i], user_data);  // Pass context
+    }
+}
+
+// Now your callback can access context
+typedef struct {
+    int sum;
+    int count;
+    int min;
+    int max;
+} Stats;
+
+void accumulate(int value, void* user_data) {
+    Stats* stats = (Stats*)user_data;
+    stats->sum += value;
+    stats->count++;
+
+    if (value < stats->min) stats->min = value;
+    if (value > stats->max) stats->max = value;
+}
+
+// Usage - no globals!
+int items[] = {5, 2, 9, 1, 7};
+Stats stats = {0, 0, INT_MAX, INT_MIN};
+process_items(items, 5, accumulate, &stats);
+
+printf("Sum: %d, Count: %d, Avg: %.2f\n",
+       stats.sum, stats.count,
+       (double)stats.sum / stats.count);
+printf("Min: %d, Max: %d\n", stats.min, stats.max);
+\end{lstlisting}
+
+\begin{tipbox}
+The \texttt{void* user\_data} pattern is CRUCIAL! It lets you pass context to callbacks without global variables. You'll see this in every C library that uses callbacks: GTK, libuv, libcurl, SQLite, OpenGL. This is how C does closures! (Well, "closures." We make do with what we have, okay?)
+\end{tipbox}
+
+\section{Real-World Pattern: Event Handlers}
+
+This is how every GUI framework and event system works:
+
+\begin{lstlisting}
+#include <stdint.h>
+#include <time.h>
+
+// Event callback type
+typedef void (*EventCallback)(void* sender, void* user_data);
+
+// Event system structure
+typedef struct {
+    EventCallback on_click;
+    EventCallback on_double_click;
+    EventCallback on_hover;
+    EventCallback on_release;
+    void* user_data;
+
+    // State
+    int x, y;
+    int width, height;
+    uint32_t last_click_time;
+    int enabled;
+} Button;
+
+// Initialize button with callbacks
+void button_init(Button* btn,
+                 int x, int y, int w, int h,
+                 EventCallback click_handler,
+                 void* data) {
+    btn->on_click = click_handler;
+    btn->on_double_click = NULL;
+    btn->on_hover = NULL;
+    btn->on_release = NULL;
+    btn->user_data = data;
+
+    btn->x = x;
+    btn->y = y;
+    btn->width = w;
+    btn->height = h;
+    btn->last_click_time = 0;
+    btn->enabled = 1;
+}
+
+// Trigger events
+void button_handle_click(Button* btn, uint32_t timestamp) {
+    if (!btn || !btn->enabled) return;
+
+    // Check for double-click (< 300ms between clicks)
+    if (btn->on_double_click &&
+        timestamp - btn->last_click_time < 300) {
+        btn->on_double_click(btn, btn->user_data);
+    } else if (btn->on_click) {
+        btn->on_click(btn, btn->user_data);
+    }
+
+    btn->last_click_time = timestamp;
+}
+
+void button_handle_hover(Button* btn) {
+    if (btn && btn->on_hover) {
+        btn->on_hover(btn, btn->user_data);
+    }
+}
+
+// User's callbacks
+void submit_handler(void* sender, void* data) {
+    const char* form_name = (const char*)data;
+    printf("Submitting form: %s\n", form_name);
+
+    // Sender is the button itself
+    Button* btn = (Button*)sender;
+    btn->enabled = 0;  // Disable after click
+}
+
+void cancel_handler(void* sender, void* data) {
+    printf("Cancelled\n");
+}
+
+void hover_handler(void* sender, void* data) {
+    Button* btn = (Button*)sender;
+    printf("Hovering over button at (%d, %d)\n", btn->x, btn->y);
+}
+
+// Usage
+int main(void) {
+    Button submit_btn;
+    button_init(&submit_btn, 10, 10, 100, 30,
+                submit_handler, "LoginForm");
+    submit_btn.on_hover = hover_handler;
+
+    Button cancel_btn;
+    button_init(&cancel_btn, 120, 10, 100, 30,
+                cancel_handler, NULL);
+
+    // Simulate events
+    button_handle_hover(&submit_btn);
+    button_handle_click(&submit_btn, 1000);
+    button_handle_click(&submit_btn, 1100);  // Won't fire, disabled
+
+    return 0;
+}
+\end{lstlisting}
+
+\section{Function Pointer Arrays: Dispatch Tables}
+
+Create dispatch tables for elegant control flow:
+
+\begin{lstlisting}
+typedef enum {
+    CMD_READ,
+    CMD_WRITE,
+    CMD_DELETE,
+    CMD_UPDATE,
+    CMD_LIST,
+    CMD_COUNT
+} Command;
+
+typedef int (*CommandHandler)(void* data);
+
+// Handlers
+int handle_read(void* data) {
+    printf("Reading: %s\n", (char*)data);
+    return 0;
+}
+
+int handle_write(void* data) {
+    printf("Writing: %s\n", (char*)data);
+    return 0;
+}
+
+int handle_delete(void* data) {
+    printf("Deleting: %s\n", (char*)data);
+    return 0;
+}
+
+int handle_update(void* data) {
+    printf("Updating: %s\n", (char*)data);
+    return 0;
+}
+
+int handle_list(void* data) {
+    printf("Listing\n");
+    return 0;
+}
+
+// Dispatch table - designated initializers (C99)
+CommandHandler handlers[CMD_COUNT] = {
+    [CMD_READ] = handle_read,
+    [CMD_WRITE] = handle_write,
+    [CMD_DELETE] = handle_delete,
+    [CMD_UPDATE] = handle_update,
+    [CMD_LIST] = handle_list
+};
+
+// Execute command - ONE LINE!
+int execute_command(Command cmd, void* data) {
+    if (cmd >= 0 && cmd < CMD_COUNT && handlers[cmd]) {
+        return handlers[cmd](data);
+    }
+    return -1;
+}
+
+// Instead of this unmaintainable mess:
+int execute_command_bad(Command cmd, void* data) {
+    switch (cmd) {
+        case CMD_READ:
+            printf("Reading: %s\n", (char*)data);
+            return 0;
+        case CMD_WRITE:
+            printf("Writing: %s\n", (char*)data);
+            return 0;
+        case CMD_DELETE:
+            printf("Deleting: %s\n", (char*)data);
+            return 0;
+        case CMD_UPDATE:
+            printf("Updating: %s\n", (char*)data);
+            return 0;
+        case CMD_LIST:
+            printf("Listing\n");
+            return 0;
+        default:
+            return -1;
+    }
+}
+
+// With dispatch table:
+// - Add new command: Add enum, add function, add to table
+// - Much cleaner, more maintainable
+// - Can be data-driven (load from config)
+// - Used in Linux kernel, interpreters, state machines
+\end{lstlisting}
+
+\begin{tipbox}
+Dispatch tables are faster than switch statements on some architectures. Modern CPUs have branch predictors, but a table lookup is a simple memory read with no branching at all! Plus, they look way cooler. (Yes, code aesthetics matter. Fight me.)
+\end{tipbox}
+
+\section{Polymorphism in C: The VTable Pattern}
+
+Function pointers enable object-oriented patterns:
+
+\begin{lstlisting}
+// "Interface" - table of function pointers
+typedef struct {
+    void (*draw)(void* self);
+    void (*move)(void* self, int x, int y);
+    void (*destroy)(void* self);
+    const char* (*get_type)(void* self);
+} ShapeVTable;
+
+// Base "class"
+typedef struct {
+    ShapeVTable* vtable;  // MUST be first member!
+    int x;
+    int y;
+} Shape;
+
+// Circle "subclass"
+typedef struct {
+    Shape base;  // MUST be first - allows casting
+    int radius;
+} Circle;
+
+void circle_draw(void* self) {
+    Circle* c = (Circle*)self;
+    printf("Drawing circle at (%d, %d) radius %d\n",
+           c->base.x, c->base.y, c->radius);
+}
+
+void circle_move(void* self, int x, int y) {
+    Circle* c = (Circle*)self;
+    c->base.x = x;
+    c->base.y = y;
+    printf("Circle moved to (%d, %d)\n", x, y);
+}
+
+void circle_destroy(void* self) {
+    Circle* c = (Circle*)self;
+    printf("Destroying circle\n");
+    free(c);
+}
+
+const char* circle_get_type(void* self) {
+    return "Circle";
+}
+
+// VTable for circles - one instance shared by all circles
+static ShapeVTable circle_vtable = {
+    .draw = circle_draw,
+    .move = circle_move,
+    .destroy = circle_destroy,
+    .get_type = circle_get_type
+};
+
+// Rectangle "subclass"
+typedef struct {
+    Shape base;
+    int width;
+    int height;
+} Rectangle;
+
+void rectangle_draw(void* self) {
+    Rectangle* r = (Rectangle*)self;
+    printf("Drawing rectangle at (%d, %d) size %dx%d\n",
+           r->base.x, r->base.y, r->width, r->height);
+}
+
+void rectangle_move(void* self, int x, int y) {
+    Rectangle* r = (Rectangle*)self;
+    r->base.x = x;
+    r->base.y = y;
+}
+
+void rectangle_destroy(void* self) {
+    free(self);
+}
+
+const char* rectangle_get_type(void* self) {
+    return "Rectangle";
+}
+
+static ShapeVTable rectangle_vtable = {
+    .draw = rectangle_draw,
+    .move = rectangle_move,
+    .destroy = rectangle_destroy,
+    .get_type = rectangle_get_type
+};
+
+// Constructors
+Circle* circle_create(int x, int y, int radius) {
+    Circle* c = malloc(sizeof(Circle));
+    if (c) {
+        c->base.vtable = &circle_vtable;
+        c->base.x = x;
+        c->base.y = y;
+        c->radius = radius;
+    }
+    return c;
+}
+
+Rectangle* rectangle_create(int x, int y, int w, int h) {
+    Rectangle* r = malloc(sizeof(Rectangle));
+    if (r) {
+        r->base.vtable = &rectangle_vtable;
+        r->base.x = x;
+        r->base.y = y;
+        r->width = w;
+        r->height = h;
+    }
+    return r;
+}
+
+// Polymorphic functions - work with ANY shape!
+void shape_draw(Shape* shape) {
+    if (shape && shape->vtable && shape->vtable->draw) {
+        shape->vtable->draw(shape);
+    }
+}
+
+void shape_move(Shape* shape, int x, int y) {
+    if (shape && shape->vtable && shape->vtable->move) {
+        shape->vtable->move(shape, x, y);
+    }
+}
+
+void shape_destroy(Shape* shape) {
+    if (shape && shape->vtable && shape->vtable->destroy) {
+        shape->vtable->destroy(shape);
+    }
+}
+
+// Usage - true polymorphism!
+int main(void) {
+    Shape* shapes[3];
+
+    shapes[0] = (Shape*)circle_create(10, 20, 5);
+    shapes[1] = (Shape*)rectangle_create(30, 40, 15, 10);
+    shapes[2] = (Shape*)circle_create(50, 60, 8);
+
+    // Polymorphic calls - different behavior per type
+    for (int i = 0; i < 3; i++) {
+        shape_draw(shapes[i]);      // Calls correct draw()
+        shape_move(shapes[i], i*100, i*100);
+
+        const char* type = shapes[i]->vtable->get_type(shapes[i]);
+        printf("Type: %s\n", type);
+    }
+
+    // Cleanup
+    for (int i = 0; i < 3; i++) {
+        shape_destroy(shapes[i]);
+    }
+
+    return 0;
+}
+\end{lstlisting}
+
+\begin{notebox}
+This is EXACTLY how GTK+, GObject, and many other C libraries implement object-oriented programming! The VTable pattern is fundamental to understanding large C codebases. C++ virtual functions are implemented the same way under the hood! So when C++ programmers brag about polymorphism, just smile and nod—we've been doing it since 1972.
+\end{notebox}
+
+\section{Why VTable Must Be First Member}
+
+This is a critical detail:
+
+\begin{lstlisting}
+// C guarantees: A pointer to a struct points to its first member
+struct Shape {
+    ShapeVTable* vtable;  // Offset 0
+    int x;                // Offset 8 (on 64-bit)
+    int y;                // Offset 12
+};
+
+struct Circle {
+    Shape base;           // Offset 0 (contains vtable at offset 0)
+    int radius;           // Offset 16
+};
+
+// Safe cast from Circle* to Shape*
+Circle* c = circle_create(10, 20, 5);
+Shape* s = (Shape*)c;  // Points to same address!
+
+// Both point to: 0x1000 (hypothetical address)
+// c->base.vtable is at 0x1000
+// s->vtable is at 0x1000
+// Same memory location!
+
+// This is why inheritance works in C!
+// Address of Circle = Address of Shape base = Address of VTable
+\end{lstlisting}
+
+\section{Signal/Slot Pattern: Multiple Observers}
+
+Multiple callbacks for one event (Observer pattern):
+
+\begin{lstlisting}
+#define MAX_LISTENERS 10
+
+typedef void (*EventListener)(void* sender, void* event_data, void* user_data);
+
+typedef struct {
+    EventListener listeners[MAX_LISTENERS];
+    void* user_data[MAX_LISTENERS];
+    int count;
+} Event;
+
+void event_init(Event* evt) {
+    evt->count = 0;
+    memset(evt->listeners, 0, sizeof(evt->listeners));
+    memset(evt->user_data, 0, sizeof(evt->user_data));
+}
+
+int event_connect(Event* evt, EventListener listener, void* user_data) {
+    if (!evt || !listener || evt->count >= MAX_LISTENERS) {
+        return -1;
+    }
+
+    evt->listeners[evt->count] = listener;
+    evt->user_data[evt->count] = user_data;
+    evt->count++;
+    return 0;
+}
+
+int event_disconnect(Event* evt, EventListener listener) {
+    if (!evt) return -1;
+
+    for (int i = 0; i < evt->count; i++) {
+        if (evt->listeners[i] == listener) {
+            // Shift remaining listeners down
+            for (int j = i; j < evt->count - 1; j++) {
+                evt->listeners[j] = evt->listeners[j + 1];
+                evt->user_data[j] = evt->user_data[j + 1];
+            }
+            evt->count--;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+void event_emit(Event* evt, void* sender, void* event_data) {
+    if (!evt) return;
+
+    // Call all registered listeners
+    for (int i = 0; i < evt->count; i++) {
+        if (evt->listeners[i]) {
+            evt->listeners[i](sender, event_data, evt->user_data[i]);
+        }
+    }
+}
+
+// Multiple handlers for same event
+void log_handler(void* sender, void* data, void* user_data) {
+    FILE* logfile = (FILE*)user_data;
+    fprintf(logfile, "Event occurred\n");
+    fflush(logfile);
+}
+
+void update_ui_handler(void* sender, void* data, void* user_data) {
+    printf("UI updated with data: %s\n", (char*)data);
+}
+
+void save_handler(void* sender, void* data, void* user_data) {
+    const char* filename = (const char*)user_data;
+    printf("Saving to %s\n", filename);
+}
+
+void analytics_handler(void* sender, void* data, void* user_data) {
+    static int event_count = 0;
+    event_count++;
+    printf("Event #%d tracked\n", event_count);
+}
+
+// Usage
+int main(void) {
+    Event on_data_changed;
+    event_init(&on_data_changed);
+
+    FILE* log = fopen("events.log", "a");
+    event_connect(&on_data_changed, log_handler, log);
+    event_connect(&on_data_changed, update_ui_handler, NULL);
+    event_connect(&on_data_changed, save_handler, "data.txt");
+    event_connect(&on_data_changed, analytics_handler, NULL);
+
+    // All four handlers get called!
+    event_emit(&on_data_changed, NULL, "new data");
+
+    // Remove a handler
+    event_disconnect(&on_data_changed, analytics_handler);
+
+    // Now only three handlers get called
+    event_emit(&on_data_changed, NULL, "updated data");
+
+    fclose(log);
+    return 0;
+}
+\end{lstlisting}
+
+\section{Common Pitfalls and How to Avoid Them}
+
+\subsection{Lifetime Issues}
+
+\begin{warningbox}
+Be careful with callback lifetimes:
+\begin{lstlisting}
+// DANGER: Function address becomes invalid!
+void register_callback(void (*cb)(void)) {
+    static void (*saved_callback)(void) = NULL;
+    saved_callback = cb;
+    // cb must remain valid for entire program!
+}
+
+void bad_example(void) {
+    // Nested function (GCC extension, non-standard!)
+    void local_callback(void) {
+        printf("Callback\n");
+    }
+
+    // DANGER: local_callback dies when bad_example returns
+    // The address points to freed stack memory!
+    register_callback(local_callback);
+}
+
+// If someone calls saved_callback later: BOOM!
+// (Not the good kind of boom, like fireworks. The bad kind.)
+\end{lstlisting}
+\end{warningbox}
+
+\subsection{Type Safety Issues}
+
+\begin{lstlisting}
+// Easy to mess up types
+typedef void (*Callback)(int);
+
+void my_callback(long x) {  // WRONG TYPE!
+    printf("%ld\n", x);
+}
+
+// This compiles with a cast but is undefined behavior
+Callback cb = (Callback)my_callback;
+cb(42);  // May crash or produce garbage!
+
+// On 64-bit: int is 32-bit, long is 64-bit
+// The calling convention is different!
+// Arguments passed in wrong registers/stack locations
+
+// SOLUTION: Match types exactly
+typedef void (*Callback)(int);
+
+void my_callback(int x) {  // Correct!
+    printf("%d\n", x);
+}
+
+Callback cb = my_callback;  // No cast needed
+cb(42);  // Works correctly
+\end{lstlisting}
+
+\subsection{NULL Pointer Checks}
+
+\begin{lstlisting}
+// ALWAYS check function pointers before calling
+void safe_call(void (*callback)(void)) {
+    if (callback) {  // Essential!
+        callback();
+    }
+}
+
+// Calling NULL crashes immediately
+void (*null_ptr)(void) = NULL;
+null_ptr();  // SEGFAULT!
+
+// Real-world pattern: optional callbacks
+typedef struct {
+    void (*on_success)(void* data);
+    void (*on_error)(int code);  // Optional
+    void* user_data;
+} Request;
+
+void request_complete(Request* req, int success) {
+    if (success && req->on_success) {
+        req->on_success(req->user_data);
+    } else if (!success && req->on_error) {
+        req->on_error(errno);
+    }
+    // on_error is optional - no crash if NULL
+}
+\end{lstlisting}
+
+\section{Advanced: Closures (Sort Of)}
+
+C doesn't have real closures, but we can fake them:
+
+\begin{lstlisting}
+// Closure structure - captures context
+typedef struct {
+    void (*func)(void* context);
+    void* context;
+} Closure;
+
+void closure_call(Closure* closure) {
+    if (closure && closure->func) {
+        closure->func(closure->context);
+    }
+}
+
+// Context for our "closure"
+typedef struct {
+    int multiplier;
+    int base;
+} MultiplyContext;
+
+void multiply_callback(void* context) {
+    MultiplyContext* ctx = (MultiplyContext*)context;
+    int result = ctx->base * ctx->multiplier;
+    printf("Result: %d * %d = %d\n",
+           ctx->base, ctx->multiplier, result);
+}
+
+// Usage
+MultiplyContext ctx = {10, 5};
+Closure closure = {
+    .func = multiply_callback,
+    .context = &ctx
+};
+closure_call(&closure);  // Prints: Result: 5 * 10 = 50
+
+// Change context
+ctx.base = 7;
+closure_call(&closure);  // Prints: Result: 7 * 10 = 70
+
+// This is how GTK+ implements callbacks with user data!
+\end{lstlisting}
+
+\section{Performance Considerations}
+
+\begin{lstlisting}
+// Benchmark: Direct vs Indirect calls
+#include <time.h>
+
+int add_direct(int a, int b) {
+    return a + b;
+}
+
+void benchmark_direct() {
+    clock_t start = clock();
+    int sum = 0;
+
+    for (int i = 0; i < 100000000; i++) {
+        sum += add_direct(i, i);
+    }
+
+    clock_t end = clock();
+    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
+    printf("Direct: %.3f seconds, sum=%d\n", elapsed, sum);
+}
+
+void benchmark_indirect() {
+    clock_t start = clock();
+    int sum = 0;
+    int (*func)(int, int) = add_direct;
+
+    for (int i = 0; i < 100000000; i++) {
+        sum += func(i, i);  // Indirect call
+    }
+
+    clock_t end = clock();
+    double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
+    printf("Indirect: %.3f seconds, sum=%d\n", elapsed, sum);
+}
+
+// Typical results (varies by compiler/CPU):
+// Direct:   0.150 seconds  (inlined, optimized)
+// Indirect: 0.300 seconds  (cannot inline, branch prediction)
+
+// Conclusion: Function pointers are ~2x slower
+// But still very fast (300M calls/second)
+// Use them when flexibility is worth the cost
+// (If you're doing 300M calls/second, you have bigger problems)
+\end{lstlisting}
+
+\begin{tipbox}
+Modern CPUs have branch predictors. If you call the same function pointer repeatedly (e.g., in a loop with qsort comparisons), the predictor learns and performance improves. Dispatch tables with consistent patterns are faster than random function pointer calls! CPUs are smart. Your function pointers? Not so much. Help them out.
+\end{tipbox}
+
+\section{Calling Conventions: What You Need to Know}
+
+\begin{lstlisting}
+// On x86-64, default calling convention (System V):
+// - First 6 integer args: RDI, RSI, RDX, RCX, R8, R9
+// - Return value: RAX
+// - Floating point: XMM0-XMM7
+
+// Windows x64 uses different convention:
+// - First 4 args: RCX, RDX, R8, R9
+// - Return value: RAX
+// - Caller must reserve 32 bytes "shadow space"
+
+// THIS MATTERS for function pointers!
+// You cannot cast between different calling conventions!
+
+#ifdef _WIN32
+    // Windows calling convention
+    typedef int (__stdcall *WinCallback)(int, int);
+#else
+    // POSIX calling convention
+    typedef int (*PosixCallback)(int, int);
+#endif
+
+// Variadic functions are special
+typedef int (*VariadicFunc)(const char* fmt, ...);
+
+int my_printf(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    int result = vprintf(fmt, args);
+    va_end(args);
+    return result;
+}
+
+// You can store printf-like functions!
+VariadicFunc logger = my_printf;
+logger("Value: %d\n", 42);
+\end{lstlisting}
+
+\section{Real-World Example: Plugin System}
+
+\begin{lstlisting}
+// plugin.h - Plugin interface
+typedef struct {
+    const char* name;
+    int version;
+
+    // Function pointers for plugin methods
+    int (*init)(void);
+    int (*process)(void* data, size_t len);
+    void (*shutdown)(void);
+    const char* (*get_info)(void);
+} Plugin;
+
+// plugin_loader.c - Load plugins from shared libraries
+#include <dlfcn.h>  // dlopen, dlsym (POSIX)
+
+Plugin* load_plugin(const char* path) {
+    void* handle = dlopen(path, RTLD_LAZY);
+    if (!handle) {
+        fprintf(stderr, "Failed to load %s: %s\n", path, dlerror());
+        return NULL;
+    }
+
+    // Get plugin descriptor
+    typedef Plugin* (*GetPluginFunc)(void);
+    GetPluginFunc get_plugin = (GetPluginFunc)dlsym(handle, "get_plugin");
+
+    if (!get_plugin) {
+        fprintf(stderr, "No get_plugin() in %s\n", path);
+        dlclose(handle);
+        return NULL;
+    }
+
+    Plugin* plugin = get_plugin();
+    if (!plugin) {
+        dlclose(handle);
+        return NULL;
+    }
+
+    printf("Loaded plugin: %s v%d\n", plugin->name, plugin->version);
+    return plugin;
+}
+
+// example_plugin.c - Example plugin implementation
+int plugin_init(void) {
+    printf("Plugin initializing...\n");
+    return 0;
+}
+
+int plugin_process(void* data, size_t len) {
+    printf("Processing %zu bytes\n", len);
+    return 0;
+}
+
+void plugin_shutdown(void) {
+    printf("Plugin shutting down\n");
+}
+
+const char* plugin_get_info(void) {
+    return "Example plugin for demonstration";
+}
+
+static Plugin example_plugin = {
+    .name = "ExamplePlugin",
+    .version = 1,
+    .init = plugin_init,
+    .process = plugin_process,
+    .shutdown = plugin_shutdown,
+    .get_info = plugin_get_info
+};
+
+// Export symbol
+Plugin* get_plugin(void) {
+    return &example_plugin;
+}
+
+// Compile plugin:
+// gcc -shared -fPIC example_plugin.c -o example.so
+
+// Main application loads and uses plugins dynamically!
+// No recompilation needed to add new plugins!
+\end{lstlisting}
+
+\section{Thread Safety Considerations}
+
+\begin{lstlisting}
+// Function pointers themselves are just addresses - thread safe
+// But the DATA they access must be protected!
+
+#include <pthread.h>
+
+typedef void (*ThreadCallback)(void* data);
+
+// UNSAFE - race condition
+int global_counter = 0;
+
+void unsafe_callback(void* data) {
+    global_counter++;  // NOT ATOMIC!
+    // Thread 1: Read counter (0)
+    // Thread 2: Read counter (0)
+    // Thread 1: Write counter (1)
+    // Thread 2: Write counter (1)
+    // Result: 1, should be 2!
+}
+
+// SAFE - mutex protection
+pthread_mutex_t counter_mutex = PTHREAD_MUTEX_INITIALIZER;
+int safe_counter = 0;
+
+void safe_callback(void* data) {
+    pthread_mutex_lock(&counter_mutex);
+    safe_counter++;
+    pthread_mutex_unlock(&counter_mutex);
+}
+
+// BETTER - thread-local storage
+__thread int thread_counter = 0;
+
+void thread_local_callback(void* data) {
+    thread_counter++;  // Each thread has its own copy
+}
+
+// BEST - pass data through callback parameter
+void stateless_callback(void* data) {
+    int* counter = (int*)data;
+    __sync_fetch_and_add(counter, 1);  // Atomic increment
+}
+\end{lstlisting}
+
+\section{Debugging Function Pointer Issues}
+
+\begin{lstlisting}
+// Print function pointer addresses for debugging
+void debug_callback(void (*callback)(void), const char* name) {
+    printf("Callback '%s' at address: %p\n", name, (void*)callback);
+}
+
+// Check if callback is NULL
+#define CALL_CALLBACK(cb, ...) do { \
+    if (cb) { \
+        cb(__VA_ARGS__); \
+    } else { \
+        fprintf(stderr, "Warning: NULL callback at %s:%d\n", \
+                __FILE__, __LINE__); \
+    } \
+} while(0)
+
+// Validate callback before storing
+int register_callback(void (*cb)(void)) {
+    if (!cb) {
+        fprintf(stderr, "Error: NULL callback\n");
+        return -1;
+    }
+
+    // On some platforms, can check if address is valid
+    // (This is platform-specific and not portable!)
+    #ifdef __linux__
+    if ((void*)cb < (void*)0x1000) {
+        fprintf(stderr, "Error: Invalid callback address\n");
+        return -1;
+    }
+    #endif
+
+    // Store callback...
+    return 0;
+}
+\end{lstlisting}
+
+\section{Summary: When to Use Function Pointers}
+
+Function pointers are essential for:
+
+\begin{itemize}
+    \item \textbf{Callbacks}: Event handling, async operations
+    \item \textbf{Polymorphism}: Implementing OOP patterns without objects
+    \item \textbf{Plugin systems}: Dynamic loading of functionality
+    \item \textbf{State machines}: Function pointers as state handlers
+    \item \textbf{Strategy pattern}: Swappable algorithms (qsort, filtering)
+    \item \textbf{Dependency injection}: Pass behavior without globals
+    \item \textbf{Dispatch tables}: Clean alternative to switch statements
+    \item \textbf{Observer pattern}: Multiple callbacks for one event
+\end{itemize}
+
+Avoid function pointers when:
+
+\begin{itemize}
+    \item Performance is critical and behavior is fixed
+    \item Code is simple and doesn't need flexibility
+    \item You're on an embedded system with limited resources
+    \item The function is called in a very tight loop
+\end{itemize}
+
+Master function pointers, and you unlock the full power of C's flexibility. They're the secret sauce that makes C suitable for everything from embedded systems to operating systems to game engines. They're how professional C developers achieve modularity, extensibility, and elegance without sacrificing performance. (Well, "elegance" might be stretching it, but you get the point.)
+
+\begin{tipbox}
+Next time you use \texttt{qsort()}, \texttt{signal()}, \texttt{atexit()}, or any GTK/Qt callback, remember: you're using function pointers. This pattern has powered systems programming for 50 years. It's the foundation of every major C library, from the Linux kernel to OpenSSL to SQLite. Learn it well, and you'll write C code that rivals modern languages in flexibility while maintaining C's legendary performance and control. (And you can tell those JavaScript developers that we had callbacks before callbacks were cool.)
+\end{tipbox}

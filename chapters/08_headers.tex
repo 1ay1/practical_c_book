@@ -1,0 +1,620 @@
+\chapter{Header File Organization}
+
+\section{The Purpose of Header Files}
+
+Header files are C's way of declaring interfaces. They tell the compiler what exists without showing how it's implemented. Think of them as a contract between different parts of your program.
+
+\begin{lstlisting}
+// mylib.h - The interface (what users see)
+#ifndef MYLIB_H
+#define MYLIB_H
+
+int add(int a, int b);
+void process_data(const char* data);
+
+#endif
+
+// mylib.c - The implementation (how it works)
+#include "mylib.h"
+
+int add(int a, int b) {
+    return a + b;
+}
+
+void process_data(const char* data) {
+    // Implementation details
+}
+\end{lstlisting}
+
+\section{Include Guards}
+
+The most fundamental pattern - preventing multiple inclusion:
+
+\begin{lstlisting}
+// Traditional include guards
+#ifndef MYHEADER_H
+#define MYHEADER_H
+
+// Header content here
+
+#endif // MYHEADER_H
+\end{lstlisting}
+
+\begin{notebox}
+The \texttt{\#ifndef} guard prevents the header from being included twice in the same translation unit, which would cause redefinition errors.
+\end{notebox}
+
+\subsection{Naming Include Guards}
+
+\begin{lstlisting}
+// Bad - generic names can collide
+#ifndef UTILS_H
+#define UTILS_H
+
+// Better - project prefix
+#ifndef MYPROJECT_UTILS_H
+#define MYPROJECT_UTILS_H
+
+// Best - full path encoding
+#ifndef MYPROJECT_INCLUDE_UTILS_H
+#define MYPROJECT_INCLUDE_UTILS_H
+
+// Alternative - use pragma once
+#pragma once
+// Not standard but widely supported (GCC, Clang, MSVC)
+\end{lstlisting}
+
+\begin{tipbox}
+Use \texttt{\#pragma once} for simplicity if you're targeting modern compilers. It's cleaner and can be faster to compile. Otherwise, use include guards with project-prefixed names.
+\end{tipbox}
+
+\section{Header File Anatomy}
+
+A well-structured header follows this order:
+
+\begin{lstlisting}
+// mylib.h
+
+// 1. Include guard / pragma once
+#ifndef MYPROJECT_MYLIB_H
+#define MYPROJECT_MYLIB_H
+
+// 2. Feature test macros (if needed)
+#define _POSIX_C_SOURCE 200809L
+
+// 3. System includes
+#include <stddef.h>
+#include <stdint.h>
+
+// 4. Project includes
+#include "myproject/common.h"
+
+// 5. C++ compatibility
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// 6. Preprocessor defines
+#define MYLIB_VERSION_MAJOR 1
+#define MYLIB_VERSION_MINOR 0
+
+// 7. Type definitions and forward declarations
+typedef struct MyObject MyObject;
+typedef enum { SUCCESS, ERROR } Status;
+
+// 8. Function declarations
+MyObject* myobject_create(void);
+Status myobject_process(MyObject* obj);
+void myobject_destroy(MyObject* obj);
+
+// 9. Inline functions (if any)
+static inline int mylib_is_valid(MyObject* obj) {
+    return obj != NULL;
+}
+
+// 10. Close C++ compatibility
+#ifdef __cplusplus
+}
+#endif
+
+// 11. Close include guard
+#endif // MYPROJECT_MYLIB_H
+\end{lstlisting}
+
+\section{What Goes in Headers}
+
+\subsection{YES - Put These in Headers}
+
+\begin{lstlisting}
+// Function declarations
+int calculate(int x);
+
+// Type definitions
+typedef struct Point Point;
+typedef int (*Callback)(void* data);
+
+// Enums
+typedef enum {
+    STATE_IDLE,
+    STATE_RUNNING,
+    STATE_DONE
+} State;
+
+// Macros
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+// Inline functions (small, frequently used)
+static inline int square(int x) {
+    return x * x;
+}
+
+// External variable declarations
+extern int global_counter;
+
+// Constants
+#define BUFFER_SIZE 1024
+extern const char* VERSION_STRING;
+\end{lstlisting}
+
+\subsection{NO - Don't Put These in Headers}
+
+\begin{lstlisting}
+// Function implementations (unless inline/static)
+// WRONG in header:
+int calculate(int x) {
+    return x * x;
+}
+
+// Variable definitions (only declarations)
+// WRONG in header:
+int global_counter = 0;
+
+// Use extern instead:
+extern int global_counter;
+
+// Non-const data
+// WRONG in header:
+char buffer[1024];
+
+// Large inline functions
+// WRONG - makes compile slow:
+static inline void huge_function(void) {
+    // 100 lines of code...
+}
+\end{lstlisting}
+
+\begin{warningbox}
+Never define variables in headers (except \texttt{static inline} functions). This causes multiple definition errors when the header is included in multiple source files.
+\end{warningbox}
+
+\section{Forward Declarations}
+
+Avoid including headers when a forward declaration suffices:
+
+\begin{lstlisting}
+// Instead of including the full header
+// #include "widget.h"  // Full definition
+
+// Use forward declaration
+typedef struct Widget Widget;
+
+// Now you can use pointers
+Widget* get_widget(void);
+void process_widget(Widget* w);
+
+// You can't do this without full definition:
+// Widget w;  // ERROR - incomplete type
+// w.x = 10;  // ERROR - don't know struct layout
+\end{lstlisting}
+
+\subsection{Why Forward Declarations Matter}
+
+\begin{lstlisting}
+// window.h
+#include "widget.h"  // Includes everything from widget.h
+
+// widget.h
+#include "window.h"  // Circular dependency!
+
+// Solution: Use forward declarations
+// window.h
+typedef struct Widget Widget;  // Forward declaration
+Widget* window_get_widget(void);
+
+// widget.h
+typedef struct Window Window;  // Forward declaration
+Window* widget_get_window(void);
+\end{lstlisting}
+
+\section{Public vs Private Headers}
+
+Professional projects separate public and private interfaces:
+
+\begin{lstlisting}
+// Public header (installed with library)
+// include/mylib/mylib.h
+#ifndef MYLIB_H
+#define MYLIB_H
+
+typedef struct MyObject MyObject;
+
+MyObject* myobject_create(void);
+void myobject_destroy(MyObject* obj);
+
+#endif
+
+// Private header (internal use only)
+// src/mylib_internal.h
+#ifndef MYLIB_INTERNAL_H
+#define MYLIB_INTERNAL_H
+
+#include "mylib/mylib.h"
+
+// Full definition - only implementation sees this
+struct MyObject {
+    int value;
+    char* name;
+    void* internal_data;
+};
+
+// Internal helper functions
+void internal_helper(MyObject* obj);
+void internal_cleanup(void);
+
+#endif
+\end{lstlisting}
+
+\section{C++ Compatibility}
+
+Make your C headers usable from C++:
+
+\begin{lstlisting}
+#ifndef MYLIB_H
+#define MYLIB_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// Your C declarations here
+void my_function(int x);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+// Why this matters:
+// C++ mangles function names: my_function -> _Z11my_functioni
+// extern "C" tells C++ to use C naming: my_function
+\end{lstlisting}
+
+\section{Platform-Specific Headers}
+
+Handle platform differences cleanly:
+
+\begin{lstlisting}
+// platform.h
+#ifndef PLATFORM_H
+#define PLATFORM_H
+
+// Detect platform
+#if defined(_WIN32) || defined(_WIN64)
+    #define PLATFORM_WINDOWS
+    #include <windows.h>
+#elif defined(__linux__)
+    #define PLATFORM_LINUX
+    #include <unistd.h>
+#elif defined(__APPLE__)
+    #define PLATFORM_MACOS
+    #include <unistd.h>
+#else
+    #error "Unsupported platform"
+#endif
+
+// Platform-specific types
+#ifdef PLATFORM_WINDOWS
+    typedef HANDLE ThreadHandle;
+    typedef DWORD ThreadId;
+#else
+    typedef pthread_t ThreadHandle;
+    typedef pthread_t ThreadId;
+#endif
+
+// Platform-independent API
+ThreadHandle thread_create(void (*func)(void*), void* arg);
+void thread_join(ThreadHandle handle);
+
+#endif
+\end{lstlisting}
+
+\section{Configuration Headers}
+
+Generate configuration at build time:
+
+\begin{lstlisting}
+// config.h.in (template processed by build system)
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// Version information
+#define VERSION_MAJOR @VERSION_MAJOR@
+#define VERSION_MINOR @VERSION_MINOR@
+#define VERSION_PATCH @VERSION_PATCH@
+#define VERSION_STRING "@VERSION_STRING@"
+
+// Feature detection
+#cmakedefine HAVE_PTHREAD
+#cmakedefine HAVE_OPENSSL
+#cmakedefine HAVE_ZLIB
+
+// Platform-specific
+#cmakedefine WORDS_BIGENDIAN
+
+// Sizes
+#define SIZEOF_INT @SIZEOF_INT@
+#define SIZEOF_LONG @SIZEOF_LONG@
+#define SIZEOF_POINTER @SIZEOF_POINTER@
+
+#endif
+
+// Usage in code
+#ifdef HAVE_PTHREAD
+    #include <pthread.h>
+    // Use threading
+#else
+    // Single-threaded fallback
+#endif
+\end{lstlisting}
+
+\section{Minimizing Dependencies}
+
+\begin{lstlisting}
+// Bad - includes everything
+// graphics.h
+#include <stdio.h>      // Only need for implementation
+#include <stdlib.h>     // Only need for implementation
+#include <string.h>     // Only need for implementation
+#include <math.h>       // Only need for implementation
+
+typedef struct {
+    double x, y;
+} Point;
+
+// Good - minimal includes
+// graphics.h
+// No includes needed!
+
+typedef struct {
+    double x, y;
+} Point;
+
+// graphics.c includes what it needs
+#include "graphics.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+\end{lstlisting}
+
+\begin{tipbox}
+Only include headers in your header file if you need the complete type definition. Use forward declarations whenever possible.
+\end{tipbox}
+
+\section{Documentation in Headers}
+
+Headers are the perfect place for API documentation:
+
+\begin{lstlisting}
+/**
+ * @file mylib.h
+ * @brief Public API for mylib
+ * @author Your Name
+ * @version 1.0
+ */
+
+#ifndef MYLIB_H
+#define MYLIB_H
+
+#include <stddef.h>
+
+/**
+ * @brief Create a new object
+ *
+ * Allocates and initializes a new object with default values.
+ * The caller is responsible for freeing the object with
+ * myobject_destroy().
+ *
+ * @return Pointer to new object, or NULL on failure
+ *
+ * @see myobject_destroy()
+ *
+ * Example:
+ * @code
+ * MyObject* obj = myobject_create();
+ * if (obj) {
+ *     // Use object
+ *     myobject_destroy(obj);
+ * }
+ * @endcode
+ */
+MyObject* myobject_create(void);
+
+/**
+ * @brief Destroy an object
+ *
+ * Frees all resources associated with the object.
+ * After calling this, the object pointer is invalid.
+ *
+ * @param obj Object to destroy (may be NULL)
+ *
+ * @note It's safe to pass NULL
+ */
+void myobject_destroy(MyObject* obj);
+
+#endif
+\end{lstlisting}
+
+\section{Header Organization Patterns}
+
+\subsection{Umbrella Headers}
+
+\begin{lstlisting}
+// myproject.h - One header includes all modules
+#ifndef MYPROJECT_H
+#define MYPROJECT_H
+
+#include "myproject/core.h"
+#include "myproject/utils.h"
+#include "myproject/network.h"
+#include "myproject/graphics.h"
+
+#endif
+
+// Users can include just one header:
+#include <myproject.h>
+\end{lstlisting}
+
+\subsection{Layered Headers}
+
+\begin{lstlisting}
+// Layer 1: Platform abstraction
+#include "platform/types.h"
+#include "platform/threads.h"
+
+// Layer 2: Core utilities
+#include "core/memory.h"
+#include "core/string.h"
+
+// Layer 3: Domain logic
+#include "domain/model.h"
+#include "domain/logic.h"
+
+// Each layer only depends on lower layers
+\end{lstlisting}
+
+\section{Header-Only Libraries}
+
+Some libraries live entirely in headers:
+
+\begin{lstlisting}
+// stb-style header-only library
+// mylib.h
+#ifndef MYLIB_H
+#define MYLIB_H
+
+// Declarations visible to everyone
+void mylib_function(void);
+
+// Implementation only compiled once
+#ifdef MYLIB_IMPLEMENTATION
+
+void mylib_function(void) {
+    // Implementation here
+}
+
+#endif // MYLIB_IMPLEMENTATION
+#endif // MYLIB_H
+
+// Usage:
+// In one .c file:
+#define MYLIB_IMPLEMENTATION
+#include "mylib.h"
+
+// In other files:
+#include "mylib.h"
+\end{lstlisting}
+
+\section{Version Guards}
+
+Detect and require minimum versions:
+
+\begin{lstlisting}
+// mylib.h
+#ifndef MYLIB_H
+#define MYLIB_H
+
+#define MYLIB_VERSION_MAJOR 2
+#define MYLIB_VERSION_MINOR 1
+#define MYLIB_VERSION_PATCH 0
+
+#define MYLIB_VERSION \
+    ((MYLIB_VERSION_MAJOR * 10000) + \
+     (MYLIB_VERSION_MINOR * 100) + \
+     MYLIB_VERSION_PATCH)
+
+// Check minimum required version
+#ifdef MYLIB_REQUIRE_VERSION
+    #if MYLIB_VERSION < MYLIB_REQUIRE_VERSION
+        #error "mylib version too old"
+    #endif
+#endif
+
+// Usage in user code:
+#define MYLIB_REQUIRE_VERSION 20100  // Require 2.1.0
+#include <mylib.h>
+\end{lstlisting}
+
+\section{Common Header Mistakes}
+
+\subsection{Missing Include Guards}
+
+\begin{lstlisting}
+// WRONG - no include guard
+// mylib.h
+typedef struct Point {
+    int x, y;
+} Point;
+
+// If included twice, compiler sees:
+// typedef struct Point { int x, y; } Point;
+// typedef struct Point { int x, y; } Point;
+// ERROR: redefinition of 'Point'
+\end{lstlisting}
+
+\subsection{Using "using" in Headers}
+
+\begin{lstlisting}
+// C++ code - NEVER do this in headers!
+// mylib.hpp
+#include <string>
+using namespace std;  // Pollutes all includers!
+
+// Now anyone who includes this header has
+// 'using namespace std' forced on them
+\end{lstlisting}
+
+\subsection{Including <windows.h> Carelessly}
+
+\begin{lstlisting}
+// WRONG - windows.h pollutes namespace
+#include <windows.h>
+
+// windows.h defines macros that break code:
+// #define min(a,b) ...
+// #define max(a,b) ...
+// Now your min/max functions don't work!
+
+// BETTER - define before including
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+\end{lstlisting}
+
+\section{Summary}
+
+Header file best practices:
+
+\begin{itemize}
+    \item Always use include guards or \texttt{\#pragma once}
+    \item Only declare, never define (except inline/static)
+    \item Minimize includes - use forward declarations
+    \item Separate public and private interfaces
+    \item Add \texttt{extern "C"} for C++ compatibility
+    \item Document your API in headers
+    \item Never use \texttt{using namespace} in headers
+    \item Keep headers minimal and focused
+\end{itemize}
+
+Well-organized headers make your API a joy to use!

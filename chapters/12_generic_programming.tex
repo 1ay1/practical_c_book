@@ -1,0 +1,1324 @@
+\chapter{Generic Programming in C}
+
+\section{The Challenge of Generic Code}
+
+C is a strongly-typed language without built-in generics. Yet real-world code constantly needs generic data structures and algorithms. How do you write a linked list that works with any type? How do you implement qsort that can sort anything?
+
+The answer: C provides several mechanisms for generic programming, each with trade-offs:
+
+\begin{itemize}
+    \item \textbf{Void pointers}: Type-erased generic code (runtime flexibility)
+    \item \textbf{Macros}: Code generation at compile-time (zero overhead)
+    \item \textbf{Function pointers}: Parameterize behavior (callbacks, comparators)
+    \item \textbf{\_Generic (C11)}: Type-based dispatch at compile-time
+    \item \textbf{Code generation}: External tools generate typed code
+\end{itemize}
+
+\textbf{The fundamental tension}: Type safety vs. genericity. C makes you choose. Void pointers sacrifice type safety for flexibility. Macros provide type safety but can be complex. Understanding when to use each approach is the mark of an experienced C programmer.
+
+\section{Void Pointer Basics}
+
+The foundation of generic programming in C—\texttt{void*} is a pointer to "unknown type" that can point to anything.
+
+\textbf{Key properties}:
+\begin{itemize}
+    \item Any pointer can be assigned to \texttt{void*} without casting
+    \item \texttt{void*} must be cast before dereferencing
+    \item Cannot do pointer arithmetic on \texttt{void*} (no size information)
+    \item Perfect for APIs that don't need to know the data type
+\end{itemize}
+
+\begin{lstlisting}
+// Basic void pointer usage
+void print_bytes(const void* data, size_t size) {
+    const unsigned char* bytes = (const unsigned char*)data;
+
+    for (size_t i = 0; i < size; i++) {
+        printf("%02x ", bytes[i]);
+    }
+    printf("\n");
+}
+
+// Works with any type
+int x = 0x12345678;
+print_bytes(&x, sizeof(x));
+
+float f = 3.14f;
+print_bytes(&f, sizeof(f));
+
+char str[] = "Hello";
+print_bytes(str, sizeof(str));
+\end{lstlisting}
+
+\begin{warningbox}
+Never dereference \texttt{void*} directly! Always cast to the correct type first. The compiler cannot help you if you cast incorrectly—this is where bugs hide.
+\end{warningbox}
+
+\subsection{Generic Swap Function}
+
+The classic example of generic programming:
+
+\begin{lstlisting}
+// Generic swap - works with any type
+void swap(void* a, void* b, size_t size) {
+    // Allocate temporary buffer
+    unsigned char temp[size];
+
+    // Copy a to temp
+    memcpy(temp, a, size);
+
+    // Copy b to a
+    memcpy(a, b, size);
+
+    // Copy temp to b
+    memcpy(b, temp, size);
+}
+
+// Usage with different types
+int x = 10, y = 20;
+swap(&x, &y, sizeof(int));
+printf("x=%d, y=%d\n", x, y);  // x=20, y=10
+
+double d1 = 3.14, d2 = 2.71;
+swap(&d1, &d2, sizeof(double));
+
+struct Point { int x, y; } p1 = {1, 2}, p2 = {3, 4};
+swap(&p1, &p2, sizeof(struct Point));
+\end{lstlisting}
+
+\textbf{Why this works}: We don't need to know the type, just its size. \texttt{memcpy} treats memory as raw bytes. This is the essence of type erasure.
+
+\section{Generic Comparison Functions}
+
+The standard library's \texttt{qsort} and \texttt{bsearch} use function pointers for generic comparison—a pattern you'll use constantly.
+
+\begin{lstlisting}
+// Standard comparator signature
+typedef int (*CompareFn)(const void* a, const void* b);
+
+// Comparator returns:
+//   < 0  if a < b
+//   = 0  if a == b
+//   > 0  if a > b
+
+// Integer comparator
+int compare_int(const void* a, const void* b) {
+    int x = *(const int*)a;
+    int y = *(const int*)b;
+    return (x > y) - (x < y);  // Branchless comparison
+}
+
+// String comparator
+int compare_string(const void* a, const void* b) {
+    const char* str_a = *(const char**)a;  // Double pointer!
+    const char* str_b = *(const char**)b;
+    return strcmp(str_a, str_b);
+}
+
+// Struct comparator
+typedef struct {
+    char name[32];
+    int age;
+    double salary;
+} Employee;
+
+int compare_employee_by_salary(const void* a, const void* b) {
+    const Employee* emp_a = (const Employee*)a;
+    const Employee* emp_b = (const Employee*)b;
+
+    if (emp_a->salary < emp_b->salary) return -1;
+    if (emp_a->salary > emp_b->salary) return 1;
+    return 0;
+}
+
+// Usage
+int numbers[] = {5, 2, 8, 1, 9};
+qsort(numbers, 5, sizeof(int), compare_int);
+
+const char* names[] = {"Charlie", "Alice", "Bob"};
+qsort(names, 3, sizeof(char*), compare_string);
+
+Employee employees[100];
+qsort(employees, 100, sizeof(Employee), compare_employee_by_salary);
+\end{lstlisting}
+
+\begin{tipbox}
+When comparing strings in arrays, remember you have an array of pointers, so you need \texttt{const char**} after casting. This trips up beginners constantly!
+\end{tipbox}
+
+\section{Generic Data Structures: Dynamic Array}
+
+Let's build a real generic dynamic array (like C++'s vector) using void pointers.
+
+\begin{lstlisting}
+typedef struct {
+    void* data;           // Pointer to array data
+    size_t element_size;  // Size of each element
+    size_t size;          // Number of elements
+    size_t capacity;      // Allocated capacity
+} Vector;
+
+// Create vector for any type
+Vector* vector_create(size_t element_size, size_t initial_capacity) {
+    Vector* vec = malloc(sizeof(Vector));
+    if (!vec) return NULL;
+
+    vec->element_size = element_size;
+    vec->size = 0;
+    vec->capacity = initial_capacity;
+    vec->data = malloc(element_size * initial_capacity);
+
+    if (!vec->data) {
+        free(vec);
+        return NULL;
+    }
+
+    return vec;
+}
+
+// Grow capacity when needed
+static int vector_grow(Vector* vec) {
+    size_t new_capacity = vec->capacity * 2;
+    void* new_data = realloc(vec->data,
+                             vec->element_size * new_capacity);
+    if (!new_data) return -1;
+
+    vec->data = new_data;
+    vec->capacity = new_capacity;
+    return 0;
+}
+
+// Push element to end
+int vector_push(Vector* vec, const void* element) {
+    if (vec->size >= vec->capacity) {
+        if (vector_grow(vec) < 0) return -1;
+    }
+
+    // Calculate destination address
+    void* dest = (char*)vec->data + (vec->size * vec->element_size);
+
+    // Copy element
+    memcpy(dest, element, vec->element_size);
+    vec->size++;
+
+    return 0;
+}
+
+// Get element by index (returns pointer)
+void* vector_get(Vector* vec, size_t index) {
+    if (index >= vec->size) return NULL;
+
+    return (char*)vec->data + (index * vec->element_size);
+}
+
+// Set element by index
+int vector_set(Vector* vec, size_t index, const void* element) {
+    if (index >= vec->size) return -1;
+
+    void* dest = (char*)vec->data + (index * vec->element_size);
+    memcpy(dest, element, vec->element_size);
+
+    return 0;
+}
+
+void vector_destroy(Vector* vec) {
+    if (vec) {
+        free(vec->data);
+        free(vec);
+    }
+}
+\end{lstlisting}
+
+\textbf{Usage with different types}:
+
+\begin{lstlisting}
+// Vector of integers
+Vector* int_vec = vector_create(sizeof(int), 10);
+
+int values[] = {10, 20, 30, 40, 50};
+for (int i = 0; i < 5; i++) {
+    vector_push(int_vec, &values[i]);
+}
+
+// Access elements
+for (size_t i = 0; i < int_vec->size; i++) {
+    int* val = (int*)vector_get(int_vec, i);
+    printf("%d ", *val);
+}
+
+vector_destroy(int_vec);
+
+// Vector of structs
+typedef struct { double x, y; } Point;
+
+Vector* point_vec = vector_create(sizeof(Point), 10);
+
+Point p = {3.14, 2.71};
+vector_push(point_vec, &p);
+
+Point* retrieved = (Point*)vector_get(point_vec, 0);
+printf("Point: (%.2f, %.2f)\n", retrieved->x, retrieved->y);
+
+vector_destroy(point_vec);
+\end{lstlisting}
+
+\textbf{Critical pointer arithmetic}: When working with \texttt{void*}, cast to \texttt{char*} for arithmetic. Each \texttt{char} is 1 byte, so \texttt{(char*)data + offset} works correctly regardless of element size.
+
+\section{Generic Linked List}
+
+A linked list that can store any type—used everywhere in systems programming.
+
+\begin{lstlisting}
+typedef struct Node {
+    void* data;
+    struct Node* next;
+} Node;
+
+typedef struct {
+    Node* head;
+    Node* tail;
+    size_t element_size;
+    size_t size;
+} LinkedList;
+
+LinkedList* list_create(size_t element_size) {
+    LinkedList* list = malloc(sizeof(LinkedList));
+    if (!list) return NULL;
+
+    list->head = NULL;
+    list->tail = NULL;
+    list->element_size = element_size;
+    list->size = 0;
+
+    return list;
+}
+
+// Append to end
+int list_append(LinkedList* list, const void* data) {
+    Node* node = malloc(sizeof(Node));
+    if (!node) return -1;
+
+    // Allocate and copy data
+    node->data = malloc(list->element_size);
+    if (!node->data) {
+        free(node);
+        return -1;
+    }
+
+    memcpy(node->data, data, list->element_size);
+    node->next = NULL;
+
+    // Add to list
+    if (list->tail) {
+        list->tail->next = node;
+        list->tail = node;
+    } else {
+        list->head = list->tail = node;
+    }
+
+    list->size++;
+    return 0;
+}
+
+// Prepend to front
+int list_prepend(LinkedList* list, const void* data) {
+    Node* node = malloc(sizeof(Node));
+    if (!node) return -1;
+
+    node->data = malloc(list->element_size);
+    if (!node->data) {
+        free(node);
+        return -1;
+    }
+
+    memcpy(node->data, data, list->element_size);
+    node->next = list->head;
+
+    list->head = node;
+    if (!list->tail) {
+        list->tail = node;
+    }
+
+    list->size++;
+    return 0;
+}
+
+// Find element using custom comparator
+Node* list_find(LinkedList* list, const void* key,
+                CompareFn compare) {
+    Node* current = list->head;
+
+    while (current) {
+        if (compare(current->data, key) == 0) {
+            return current;
+        }
+        current = current->next;
+    }
+
+    return NULL;
+}
+
+// Remove element
+int list_remove(LinkedList* list, const void* key,
+                CompareFn compare) {
+    Node* prev = NULL;
+    Node* current = list->head;
+
+    while (current) {
+        if (compare(current->data, key) == 0) {
+            // Found it - remove
+            if (prev) {
+                prev->next = current->next;
+            } else {
+                list->head = current->next;
+            }
+
+            if (current == list->tail) {
+                list->tail = prev;
+            }
+
+            free(current->data);
+            free(current);
+            list->size--;
+            return 0;
+        }
+
+        prev = current;
+        current = current->next;
+    }
+
+    return -1;  // Not found
+}
+
+// Destroy entire list
+void list_destroy(LinkedList* list) {
+    if (!list) return;
+
+    Node* current = list->head;
+    while (current) {
+        Node* next = current->next;
+        free(current->data);
+        free(current);
+        current = next;
+    }
+
+    free(list);
+}
+
+// Iterate over list
+void list_foreach(LinkedList* list, void (*callback)(void* data)) {
+    Node* current = list->head;
+
+    while (current) {
+        callback(current->data);
+        current = current->next;
+    }
+}
+\end{lstlisting}
+
+\textbf{Usage}:
+
+\begin{lstlisting}
+// List of integers
+LinkedList* int_list = list_create(sizeof(int));
+
+int values[] = {10, 20, 30, 40, 50};
+for (int i = 0; i < 5; i++) {
+    list_append(int_list, &values[i]);
+}
+
+// Find an element
+int search = 30;
+Node* found = list_find(int_list, &search, compare_int);
+if (found) {
+    printf("Found: %d\n", *(int*)found->data);
+}
+
+// Iterate
+void print_int(void* data) {
+    printf("%d ", *(int*)data);
+}
+list_foreach(int_list, print_int);
+
+list_destroy(int_list);
+\end{lstlisting}
+
+\section{Generic Hash Table}
+
+The workhorse of generic programming—hash tables store key-value pairs of any type.
+
+\begin{lstlisting}
+#define HASH_TABLE_INITIAL_SIZE 16
+#define HASH_TABLE_LOAD_FACTOR 0.75
+
+typedef struct HashEntry {
+    void* key;
+    void* value;
+    struct HashEntry* next;  // Chaining for collisions
+} HashEntry;
+
+typedef struct {
+    HashEntry** buckets;
+    size_t bucket_count;
+    size_t size;
+    size_t key_size;
+    size_t value_size;
+
+    // Function pointers for key operations
+    unsigned int (*hash)(const void* key);
+    int (*compare)(const void* a, const void* b);
+} HashTable;
+
+// Create hash table
+HashTable* ht_create(size_t key_size, size_t value_size,
+                     unsigned int (*hash)(const void*),
+                     int (*compare)(const void*, const void*)) {
+    HashTable* ht = malloc(sizeof(HashTable));
+    if (!ht) return NULL;
+
+    ht->bucket_count = HASH_TABLE_INITIAL_SIZE;
+    ht->buckets = calloc(ht->bucket_count, sizeof(HashEntry*));
+    if (!ht->buckets) {
+        free(ht);
+        return NULL;
+    }
+
+    ht->size = 0;
+    ht->key_size = key_size;
+    ht->value_size = value_size;
+    ht->hash = hash;
+    ht->compare = compare;
+
+    return ht;
+}
+
+// Insert or update
+int ht_set(HashTable* ht, const void* key, const void* value) {
+    unsigned int hash_val = ht->hash(key);
+    size_t index = hash_val % ht->bucket_count;
+
+    // Check if key exists
+    HashEntry* entry = ht->buckets[index];
+    while (entry) {
+        if (ht->compare(entry->key, key) == 0) {
+            // Update existing
+            memcpy(entry->value, value, ht->value_size);
+            return 0;
+        }
+        entry = entry->next;
+    }
+
+    // Create new entry
+    entry = malloc(sizeof(HashEntry));
+    if (!entry) return -1;
+
+    entry->key = malloc(ht->key_size);
+    entry->value = malloc(ht->value_size);
+
+    if (!entry->key || !entry->value) {
+        free(entry->key);
+        free(entry->value);
+        free(entry);
+        return -1;
+    }
+
+    memcpy(entry->key, key, ht->key_size);
+    memcpy(entry->value, value, ht->value_size);
+
+    // Insert at head of chain
+    entry->next = ht->buckets[index];
+    ht->buckets[index] = entry;
+    ht->size++;
+
+    return 0;
+}
+
+// Get value by key
+void* ht_get(HashTable* ht, const void* key) {
+    unsigned int hash_val = ht->hash(key);
+    size_t index = hash_val % ht->bucket_count;
+
+    HashEntry* entry = ht->buckets[index];
+    while (entry) {
+        if (ht->compare(entry->key, key) == 0) {
+            return entry->value;
+        }
+        entry = entry->next;
+    }
+
+    return NULL;  // Not found
+}
+
+// Remove entry
+int ht_remove(HashTable* ht, const void* key) {
+    unsigned int hash_val = ht->hash(key);
+    size_t index = hash_val % ht->bucket_count;
+
+    HashEntry* prev = NULL;
+    HashEntry* entry = ht->buckets[index];
+
+    while (entry) {
+        if (ht->compare(entry->key, key) == 0) {
+            if (prev) {
+                prev->next = entry->next;
+            } else {
+                ht->buckets[index] = entry->next;
+            }
+
+            free(entry->key);
+            free(entry->value);
+            free(entry);
+            ht->size--;
+            return 0;
+        }
+
+        prev = entry;
+        entry = entry->next;
+    }
+
+    return -1;  // Not found
+}
+
+void ht_destroy(HashTable* ht) {
+    if (!ht) return;
+
+    for (size_t i = 0; i < ht->bucket_count; i++) {
+        HashEntry* entry = ht->buckets[i];
+        while (entry) {
+            HashEntry* next = entry->next;
+            free(entry->key);
+            free(entry->value);
+            free(entry);
+            entry = next;
+        }
+    }
+
+    free(ht->buckets);
+    free(ht);
+}
+\end{lstlisting}
+
+\textbf{Hash functions for common types}:
+
+\begin{lstlisting}
+// Integer hash
+unsigned int hash_int(const void* key) {
+    int k = *(const int*)key;
+    // Knuth's multiplicative hash
+    return (unsigned int)k * 2654435761u;
+}
+
+// String hash (djb2 algorithm)
+unsigned int hash_string(const void* key) {
+    const char* str = *(const char**)key;
+    unsigned int hash = 5381;
+    int c;
+
+    while ((c = *str++)) {
+        hash = ((hash << 5) + hash) + c;  // hash * 33 + c
+    }
+
+    return hash;
+}
+
+// Generic hash (hash any bytes)
+unsigned int hash_bytes(const void* data, size_t len) {
+    const unsigned char* bytes = data;
+    unsigned int hash = 0;
+
+    for (size_t i = 0; i < len; i++) {
+        hash = hash * 31 + bytes[i];
+    }
+
+    return hash;
+}
+\end{lstlisting}
+
+\textbf{Usage}:
+
+\begin{lstlisting}
+// String -> Integer mapping
+HashTable* word_count = ht_create(
+    sizeof(char*),
+    sizeof(int),
+    hash_string,
+    compare_string
+);
+
+// Count word frequencies
+const char* words[] = {"hello", "world", "hello", "C"};
+for (int i = 0; i < 4; i++) {
+    int* count = ht_get(word_count, &words[i]);
+    if (count) {
+        (*count)++;
+        ht_set(word_count, &words[i], count);
+    } else {
+        int one = 1;
+        ht_set(word_count, &words[i], &one);
+    }
+}
+
+// Lookup
+const char* query = "hello";
+int* result = ht_get(word_count, &query);
+if (result) {
+    printf("'%s' appears %d times\n", query, *result);
+}
+
+ht_destroy(word_count);
+\end{lstlisting}
+
+\section{Macro-Based Generic Programming}
+
+Macros can generate type-specific code at compile-time—zero runtime overhead, full type safety.
+
+\subsection{Simple Generic Macros}
+
+\begin{lstlisting}
+// Generic min/max with type safety
+#define MIN(a, b) ({ \
+    __typeof__(a) _a = (a); \
+    __typeof__(b) _b = (b); \
+    _a < _b ? _a : _b; \
+})
+
+#define MAX(a, b) ({ \
+    __typeof__(a) _a = (a); \
+    __typeof__(b) _b = (b); \
+    _a > _b ? _a : _b; \
+})
+
+// Usage
+int x = MIN(10, 20);          // Type: int
+double d = MAX(3.14, 2.71);   // Type: double
+\end{lstlisting}
+
+\textbf{Note}: \texttt{\_\_typeof\_\_} is a GCC extension. The compound statement ensures arguments are evaluated once.
+
+\subsection{Container Generation Macros}
+
+Generate type-specific containers at compile-time:
+
+\begin{lstlisting}
+// Define a typed dynamic array
+#define DEFINE_VECTOR(T) \
+    typedef struct { \
+        T* data; \
+        size_t size; \
+        size_t capacity; \
+    } T##_vector; \
+    \
+    static inline T##_vector* T##_vector_create(size_t cap) { \
+        T##_vector* vec = malloc(sizeof(T##_vector)); \
+        if (!vec) return NULL; \
+        vec->data = malloc(sizeof(T) * cap); \
+        if (!vec->data) { free(vec); return NULL; } \
+        vec->size = 0; \
+        vec->capacity = cap; \
+        return vec; \
+    } \
+    \
+    static inline int T##_vector_push(T##_vector* vec, T elem) { \
+        if (vec->size >= vec->capacity) { \
+            size_t new_cap = vec->capacity * 2; \
+            T* new_data = realloc(vec->data, sizeof(T) * new_cap); \
+            if (!new_data) return -1; \
+            vec->data = new_data; \
+            vec->capacity = new_cap; \
+        } \
+        vec->data[vec->size++] = elem; \
+        return 0; \
+    } \
+    \
+    static inline T T##_vector_get(T##_vector* vec, size_t idx) { \
+        return vec->data[idx]; \
+    } \
+    \
+    static inline void T##_vector_destroy(T##_vector* vec) { \
+        if (vec) { free(vec->data); free(vec); } \
+    }
+
+// Generate int vector
+DEFINE_VECTOR(int)
+
+// Generate double vector
+DEFINE_VECTOR(double)
+
+// Generate Point vector
+typedef struct { int x, y; } Point;
+DEFINE_VECTOR(Point)
+
+// Usage - fully type-safe!
+int_vector* iv = int_vector_create(10);
+int_vector_push(iv, 42);
+int_vector_push(iv, 100);
+int value = int_vector_get(iv, 0);  // Returns int, not void*
+int_vector_destroy(iv);
+
+Point_vector* pv = Point_vector_create(10);
+Point p = {10, 20};
+Point_vector_push(pv, p);
+Point retrieved = Point_vector_get(pv, 0);  // Type-safe!
+Point_vector_destroy(pv);
+\end{lstlisting}
+
+\textbf{Advantages}:
+\begin{itemize}
+    \item Full type safety—compiler catches type errors
+    \item No void pointer overhead—direct memory access
+    \item Inlined functions—maximum performance
+    \item No heap allocation for elements (stored inline)
+\end{itemize}
+
+\textbf{Disadvantages}:
+\begin{itemize}
+    \item Code bloat—separate code for each type
+    \item Difficult debugging—macro expansion can be cryptic
+    \item Must include in header—increases compile time
+\end{itemize}
+
+\section{C11 \_Generic Type Selection}
+
+C11 added \texttt{\_Generic} for compile-time type dispatch—the closest C gets to function overloading.
+
+\begin{lstlisting}
+// Generic print function
+#define print(x) _Generic((x), \
+    int: print_int, \
+    double: print_double, \
+    char*: print_string, \
+    default: print_generic)(x)
+
+void print_int(int x) {
+    printf("int: %d\n", x);
+}
+
+void print_double(double x) {
+    printf("double: %.2f\n", x);
+}
+
+void print_string(char* x) {
+    printf("string: %s\n", x);
+}
+
+void print_generic(void* x) {
+    printf("generic: %p\n", x);
+}
+
+// Usage - looks like function overloading!
+print(42);           // Calls print_int
+print(3.14);         // Calls print_double
+print("hello");      // Calls print_string
+\end{lstlisting}
+
+\subsection{Generic Math Functions}
+
+\begin{lstlisting}
+// Generic absolute value
+#define abs_value(x) _Generic((x), \
+    int: abs, \
+    long: labs, \
+    long long: llabs, \
+    float: fabsf, \
+    double: fabs, \
+    long double: fabsl)(x)
+
+// Generic square root
+#define sqrt_generic(x) _Generic((x), \
+    float: sqrtf, \
+    double: sqrt, \
+    long double: sqrtl, \
+    default: sqrt)(x)
+
+// Usage
+int i = abs_value(-10);              // Calls abs()
+double d = abs_value(-3.14);         // Calls fabs()
+float f = sqrt_generic(16.0f);       // Calls sqrtf()
+\end{lstlisting}
+
+\subsection{Generic Container Operations}
+
+\begin{lstlisting}
+// Generic size macro
+#define container_size(c) _Generic((c), \
+    Vector*: vector_size, \
+    LinkedList*: list_size, \
+    HashTable*: ht_size)(c)
+
+size_t vector_size(Vector* v) { return v->size; }
+size_t list_size(LinkedList* l) { return l->size; }
+size_t ht_size(HashTable* ht) { return ht->size; }
+
+// Usage
+Vector* vec = vector_create(sizeof(int), 10);
+LinkedList* list = list_create(sizeof(int));
+
+printf("Vector size: %zu\n", container_size(vec));
+printf("List size: %zu\n", container_size(list));
+\end{lstlisting}
+
+\section{Intrusive Data Structures}
+
+A powerful pattern used in Linux kernel and many high-performance systems—embed list/tree nodes inside your structs instead of storing pointers.
+
+\begin{lstlisting}
+// Intrusive list node
+typedef struct ListNode {
+    struct ListNode* next;
+    struct ListNode* prev;
+} ListNode;
+
+// Your struct embeds the list node
+typedef struct {
+    char name[32];
+    int age;
+    ListNode node;  // Embedded list node
+} Person;
+
+// Generic list operations work on ListNode
+void list_add(ListNode* head, ListNode* node) {
+    node->next = head->next;
+    node->prev = head;
+    head->next->prev = node;
+    head->next = node;
+}
+
+void list_remove(ListNode* node) {
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+}
+
+// Get container struct from node (Linux kernel pattern)
+#define container_of(ptr, type, member) \
+    ((type*)((char*)(ptr) - offsetof(type, member)))
+
+// Usage
+ListNode person_list = {&person_list, &person_list};  // Sentinel
+
+Person alice = {.name = "Alice", .age = 30};
+list_add(&person_list, &alice.node);
+
+Person bob = {.name = "Bob", .age = 25};
+list_add(&person_list, &bob.node);
+
+// Iterate
+ListNode* curr = person_list.next;
+while (curr != &person_list) {
+    Person* p = container_of(curr, Person, node);
+    printf("%s, %d\n", p->name, p->age);
+    curr = curr->next;
+}
+\end{lstlisting}
+
+\textbf{Why intrusive structures?}
+\begin{itemize}
+    \item No separate allocation for list nodes
+    \item Better cache locality—data and links together
+    \item One object can be in multiple lists simultaneously
+    \item Zero memory overhead beyond the links
+\end{itemize}
+
+\textbf{Trade-off}: Less generic (must embed node in struct), but much more efficient.
+
+\section{Function Pointer Tables for Polymorphism}
+
+Implement polymorphism using function pointer tables—the foundation of object-oriented C.
+
+\begin{lstlisting}
+// Interface (vtable)
+typedef struct {
+    void (*draw)(void* self);
+    void (*move)(void* self, int dx, int dy);
+    void (*destroy)(void* self);
+} ShapeVTable;
+
+// Base shape type
+typedef struct {
+    const ShapeVTable* vtable;
+    int x, y;
+} Shape;
+
+// Circle implementation
+typedef struct {
+    Shape base;  // Inherit from Shape
+    int radius;
+} Circle;
+
+void circle_draw(void* self) {
+    Circle* c = (Circle*)self;
+    printf("Drawing circle at (%d,%d) radius %d\n",
+           c->base.x, c->base.y, c->radius);
+}
+
+void circle_move(void* self, int dx, int dy) {
+    Circle* c = (Circle*)self;
+    c->base.x += dx;
+    c->base.y += dy;
+}
+
+void circle_destroy(void* self) {
+    free(self);
+}
+
+static const ShapeVTable circle_vtable = {
+    .draw = circle_draw,
+    .move = circle_move,
+    .destroy = circle_destroy
+};
+
+// Rectangle implementation
+typedef struct {
+    Shape base;
+    int width, height;
+} Rectangle;
+
+void rectangle_draw(void* self) {
+    Rectangle* r = (Rectangle*)self;
+    printf("Drawing rectangle at (%d,%d) size %dx%d\n",
+           r->base.x, r->base.y, r->width, r->height);
+}
+
+void rectangle_move(void* self, int dx, int dy) {
+    Rectangle* r = (Rectangle*)self;
+    r->base.x += dx;
+    r->base.y += dy;
+}
+
+void rectangle_destroy(void* self) {
+    free(self);
+}
+
+static const ShapeVTable rectangle_vtable = {
+    .draw = rectangle_draw,
+    .move = rectangle_move,
+    .destroy = rectangle_destroy
+};
+
+// Constructors
+Circle* circle_create(int x, int y, int radius) {
+    Circle* c = malloc(sizeof(Circle));
+    if (!c) return NULL;
+
+    c->base.vtable = &circle_vtable;
+    c->base.x = x;
+    c->base.y = y;
+    c->radius = radius;
+
+    return c;
+}
+
+Rectangle* rectangle_create(int x, int y, int w, int h) {
+    Rectangle* r = malloc(sizeof(Rectangle));
+    if (!r) return NULL;
+
+    r->base.vtable = &rectangle_vtable;
+    r->base.x = x;
+    r->base.y = y;
+    r->width = w;
+    r->height = h;
+
+    return r;
+}
+
+// Generic shape operations (polymorphic)
+void shape_draw(Shape* shape) {
+    shape->vtable->draw(shape);
+}
+
+void shape_move(Shape* shape, int dx, int dy) {
+    shape->vtable->move(shape, dx, dy);
+}
+
+void shape_destroy(Shape* shape) {
+    shape->vtable->destroy(shape);
+}
+
+// Usage - polymorphic behavior
+Shape* shapes[10];
+shapes[0] = (Shape*)circle_create(0, 0, 10);
+shapes[1] = (Shape*)rectangle_create(5, 5, 20, 30);
+shapes[2] = (Shape*)circle_create(10, 10, 5);
+
+for (int i = 0; i < 3; i++) {
+    shape_draw(shapes[i]);    // Calls correct draw function
+    shape_move(shapes[i], 1, 1);
+    shape_destroy(shapes[i]);
+}
+\end{lstlisting}
+
+This is how GLib, GTK+, and many other C libraries implement object-oriented programming.
+
+\section{Iterator Pattern}
+
+Generic iteration over any container type.
+
+\begin{lstlisting}
+// Generic iterator interface
+typedef struct {
+    void* container;
+    void* current;
+
+    void* (*next)(void* iterator);
+    int (*has_next)(void* iterator);
+    void* (*get)(void* iterator);
+} Iterator;
+
+// Vector iterator implementation
+typedef struct {
+    Vector* vec;
+    size_t index;
+} VectorIterator;
+
+void* vector_iter_next(void* it) {
+    VectorIterator* iter = (VectorIterator*)it;
+    if (iter->index < iter->vec->size) {
+        iter->index++;
+    }
+    return it;
+}
+
+int vector_iter_has_next(void* it) {
+    VectorIterator* iter = (VectorIterator*)it;
+    return iter->index < iter->vec->size;
+}
+
+void* vector_iter_get(void* it) {
+    VectorIterator* iter = (VectorIterator*)it;
+    return vector_get(iter->vec, iter->index);
+}
+
+Iterator vector_iterator(Vector* vec) {
+    VectorIterator* viter = malloc(sizeof(VectorIterator));
+    viter->vec = vec;
+    viter->index = 0;
+
+    Iterator iter = {
+        .container = vec,
+        .current = viter,
+        .next = vector_iter_next,
+        .has_next = vector_iter_has_next,
+        .get = vector_iter_get
+    };
+
+    return iter;
+}
+
+// Usage - works with any container
+void print_all(Iterator iter) {
+    while (iter.has_next(iter.current)) {
+        void* elem = iter.get(iter.current);
+        // Process element
+        iter.next(iter.current);
+    }
+}
+\end{lstlisting}
+
+\section{Real-World Generic Patterns}
+
+\subsection{Plugin System}
+
+Load and use plugins at runtime:
+
+\begin{lstlisting}
+typedef struct {
+    const char* name;
+    const char* version;
+
+    int (*init)(void);
+    void (*shutdown)(void);
+    void (*process)(void* data);
+} Plugin;
+
+// Plugin registry
+#define MAX_PLUGINS 32
+static Plugin* plugins[MAX_PLUGINS];
+static int plugin_count = 0;
+
+int register_plugin(Plugin* plugin) {
+    if (plugin_count >= MAX_PLUGINS) return -1;
+
+    printf("Registering plugin: %s v%s\n",
+           plugin->name, plugin->version);
+
+    if (plugin->init && plugin->init() < 0) {
+        return -1;
+    }
+
+    plugins[plugin_count++] = plugin;
+    return 0;
+}
+
+void process_all_plugins(void* data) {
+    for (int i = 0; i < plugin_count; i++) {
+        if (plugins[i]->process) {
+            plugins[i]->process(data);
+        }
+    }
+}
+
+// Example plugin
+int json_plugin_init(void) {
+    printf("JSON plugin initialized\n");
+    return 0;
+}
+
+void json_plugin_process(void* data) {
+    printf("Processing JSON data\n");
+}
+
+Plugin json_plugin = {
+    .name = "JSON Parser",
+    .version = "1.0",
+    .init = json_plugin_init,
+    .process = json_plugin_process
+};
+
+// Usage
+register_plugin(&json_plugin);
+\end{lstlisting}
+
+\subsection{Allocator Interface}
+
+Generic memory allocator pattern:
+
+\begin{lstlisting}
+typedef struct {
+    void* (*alloc)(void* ctx, size_t size);
+    void (*free)(void* ctx, void* ptr);
+    void* context;
+} Allocator;
+
+// Default system allocator
+void* system_alloc(void* ctx, size_t size) {
+    (void)ctx;
+    return malloc(size);
+}
+
+void system_free(void* ctx, void* ptr) {
+    (void)ctx;
+    free(ptr);
+}
+
+Allocator system_allocator = {
+    .alloc = system_alloc,
+    .free = system_free,
+    .context = NULL
+};
+
+// Arena allocator
+typedef struct {
+    char* buffer;
+    size_t size;
+    size_t used;
+} Arena;
+
+void* arena_alloc(void* ctx, size_t size) {
+    Arena* arena = (Arena*)ctx;
+
+    if (arena->used + size > arena->size) {
+        return NULL;  // Out of memory
+    }
+
+    void* ptr = arena->buffer + arena->used;
+    arena->used += size;
+    return ptr;
+}
+
+void arena_free(void* ctx, void* ptr) {
+    // Arena doesn't free individual allocations
+    (void)ctx;
+    (void)ptr;
+}
+
+Allocator create_arena_allocator(void* buffer, size_t size) {
+    Arena* arena = (Arena*)buffer;
+    arena->buffer = (char*)buffer + sizeof(Arena);
+    arena->size = size - sizeof(Arena);
+    arena->used = 0;
+
+    Allocator alloc = {
+        .alloc = arena_alloc,
+        .free = arena_free,
+        .context = arena
+    };
+
+    return alloc;
+}
+
+// Use any allocator
+void* generic_alloc(Allocator* alloc, size_t size) {
+    return alloc->alloc(alloc->context, size);
+}
+
+void generic_free(Allocator* alloc, void* ptr) {
+    alloc->free(alloc->context, ptr);
+}
+
+// Data structures can use any allocator
+Vector* vector_create_with_allocator(size_t elem_size,
+                                     Allocator* alloc) {
+    Vector* vec = generic_alloc(alloc, sizeof(Vector));
+    // ... initialize with custom allocator
+    return vec;
+}
+\end{lstlisting}
+
+\section{Performance Considerations}
+
+\subsection{Void Pointer Overhead}
+
+\begin{lstlisting}
+// Void pointer version - indirection
+void* get_element(Vector* v, size_t index) {
+    return (char*)v->data + (index * v->element_size);
+}
+int x = *(int*)get_element(vec, i);  // Load, cast, dereference
+
+// Typed version - direct access
+int* data = (int*)vec->data;
+int x = data[i];  // Single array access
+
+// The difference:
+// Void pointer: 3-5 instructions
+// Typed: 1 instruction
+\end{lstlisting}
+
+\textbf{When void pointers matter}: In tight loops processing millions of elements, the overhead adds up. Use macros or code generation for hot paths.
+
+\subsection{Function Pointer Overhead}
+
+\begin{lstlisting}
+// Function pointer call
+void (*func)(void*) = get_function();
+func(data);  // Indirect call - can't be inlined
+
+// Direct call
+process_data(data);  // Can be inlined
+
+// Benchmark: function pointers are ~2-5x slower
+\end{lstlisting}
+
+\textbf{Optimization}: Use function pointers for configuration and rare paths. Use direct calls for hot paths.
+
+\section{Summary}
+
+Generic programming in C requires understanding multiple techniques:
+
+\begin{itemize}
+    \item \textbf{Void pointers}: Runtime genericity, loss of type safety
+    \item \textbf{Function pointers}: Generic behavior, callback patterns
+    \item \textbf{Macros}: Compile-time code generation, full type safety
+    \item \textbf{\_Generic (C11)}: Type-based dispatch, pseudo-overloading
+    \item \textbf{Intrusive structures}: Maximum performance, less generic
+    \item \textbf{VTables}: Polymorphism and OOP in C
+\end{itemize}
+
+\textbf{Choose based on needs}:
+\begin{itemize}
+    \item Need runtime flexibility? → Void pointers
+    \item Need maximum performance? → Macros or intrusive structures
+    \item Need type safety? → Macros or \_Generic
+    \item Need polymorphism? → Function pointer tables
+\end{itemize}
+
+Real C code uses all these techniques. Libraries like GLib, SQLite, and the Linux kernel demonstrate that C can handle complex generic programming when you master these patterns!

@@ -1,0 +1,639 @@
+\chapter{Testing \& Debugging Idioms}
+
+\section{Why Testing Matters in C}
+
+C doesn't have built-in testing frameworks, exception handling, or memory safety. This makes testing absolutely critical. One small bug can corrupt memory, crash your program, or create security vulnerabilities.
+
+\begin{lstlisting}
+// A simple bug with devastating consequences
+char buffer[10];
+strcpy(buffer, user_input);  // Buffer overflow!
+// Could overwrite return address, function pointers, etc.
+\end{lstlisting}
+
+\section{Simple Unit Test Framework}
+
+You don't need fancy frameworks. Here's a minimal but effective test system:
+
+\begin{lstlisting}
+#include <stdio.h>
+#include <stdlib.h>
+
+// Global test counters
+static int tests_run = 0;
+static int tests_passed = 0;
+static int tests_failed = 0;
+
+// Test macros
+#define TEST(name) \
+    static void test_##name(void); \
+    static void test_##name##_wrapper(void) { \
+        printf("Running %s...", #name); \
+        test_##name(); \
+        tests_run++; \
+        printf(" PASSED\n"); \
+        tests_passed++; \
+    } \
+    static void test_##name(void)
+
+#define RUN_TEST(name) test_##name##_wrapper()
+
+#define ASSERT(condition) do { \
+    if (!(condition)) { \
+        fprintf(stderr, "\n  FAILED: %s\n", #condition); \
+        fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
+        tests_failed++; \
+        return; \
+    } \
+} while(0)
+
+#define ASSERT_EQ(a, b) do { \
+    if ((a) != (b)) { \
+        fprintf(stderr, "\n  FAILED: %s == %s\n", #a, #b); \
+        fprintf(stderr, "  Expected: %d, Got: %d\n", (int)(b), (int)(a)); \
+        fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
+        tests_failed++; \
+        return; \
+    } \
+} while(0)
+
+#define ASSERT_STR_EQ(a, b) do { \
+    if (strcmp((a), (b)) != 0) { \
+        fprintf(stderr, "\n  FAILED: %s == %s\n", #a, #b); \
+        fprintf(stderr, "  Expected: \"%s\", Got: \"%s\"\n", (b), (a)); \
+        fprintf(stderr, "  at %s:%d\n", __FILE__, __LINE__); \
+        tests_failed++; \
+        return; \
+    } \
+} while(0)
+
+// Define tests
+TEST(addition) {
+    ASSERT_EQ(2 + 2, 4);
+    ASSERT_EQ(10 + 5, 15);
+    ASSERT_EQ(-5 + 5, 0);
+}
+
+TEST(string_operations) {
+    char str[] = "hello";
+    ASSERT_STR_EQ(str, "hello");
+    ASSERT_EQ(strlen(str), 5);
+}
+
+// Main test runner
+int main(void) {
+    printf("Running tests...\n\n");
+
+    RUN_TEST(addition);
+    RUN_TEST(string_operations);
+
+    printf("\n=== Test Results ===\n");
+    printf("Passed: %d\n", tests_passed);
+    printf("Failed: %d\n", tests_failed);
+    printf("Total:  %d\n", tests_run);
+
+    return tests_failed > 0 ? 1 : 0;
+}
+\end{lstlisting}
+
+\begin{tipbox}
+This simple framework is enough for most C projects. It's self-contained, requires no external dependencies, and gives clear output.
+\end{tipbox}
+
+\section{Testing Memory Allocations}
+
+Memory bugs are C's biggest problem. Test them explicitly:
+
+\begin{lstlisting}
+// Test that function handles allocation failure
+TEST(handles_allocation_failure) {
+    // Save original malloc
+    void* (*old_malloc)(size_t) = malloc;
+
+    // Inject failure (using macro or function wrapper)
+    // This example assumes you have a test malloc wrapper
+    set_malloc_failure_mode(1);
+
+    char* result = my_allocating_function();
+    ASSERT(result == NULL);  // Should handle failure gracefully
+
+    set_malloc_failure_mode(0);
+}
+
+// Test for memory leaks
+TEST(no_memory_leaks) {
+    int alloc_before = get_allocation_count();
+
+    MyObject* obj = myobject_create();
+    ASSERT(obj != NULL);
+    myobject_destroy(obj);
+
+    int alloc_after = get_allocation_count();
+    ASSERT_EQ(alloc_before, alloc_after);
+}
+\end{lstlisting}
+
+\section{Memory Leak Detection}
+
+Track all allocations in debug builds:
+
+\begin{lstlisting}
+#ifdef DEBUG_MEMORY
+
+typedef struct MemEntry {
+    void* ptr;
+    size_t size;
+    const char* file;
+    int line;
+    struct MemEntry* next;
+} MemEntry;
+
+static MemEntry* mem_list = NULL;
+static int alloc_count = 0;
+static int free_count = 0;
+static size_t bytes_allocated = 0;
+
+void* debug_malloc(size_t size, const char* file, int line) {
+    void* ptr = malloc(size);
+    if (ptr) {
+        MemEntry* entry = malloc(sizeof(MemEntry));
+        entry->ptr = ptr;
+        entry->size = size;
+        entry->file = file;
+        entry->line = line;
+        entry->next = mem_list;
+        mem_list = entry;
+
+        alloc_count++;
+        bytes_allocated += size;
+
+        printf("[ALLOC] %p (%zu bytes) at %s:%d\n",
+               ptr, size, file, line);
+    }
+    return ptr;
+}
+
+void debug_free(void* ptr, const char* file, int line) {
+    if (!ptr) return;
+
+    MemEntry** entry = &mem_list;
+    while (*entry) {
+        if ((*entry)->ptr == ptr) {
+            MemEntry* to_free = *entry;
+            *entry = (*entry)->next;
+
+            printf("[FREE] %p at %s:%d\n", ptr, file, line);
+
+            free_count++;
+            bytes_allocated -= to_free->size;
+            free(to_free);
+            free(ptr);
+            return;
+        }
+        entry = &(*entry)->next;
+    }
+
+    fprintf(stderr, "[ERROR] Freeing untracked pointer %p at %s:%d\n",
+            ptr, file, line);
+    free(ptr);
+}
+
+void debug_report_leaks(void) {
+    printf("\n=== Memory Report ===\n");
+    printf("Allocations: %d\n", alloc_count);
+    printf("Frees: %d\n", free_count);
+    printf("Leaks: %d\n", alloc_count - free_count);
+    printf("Bytes still allocated: %zu\n", bytes_allocated);
+
+    if (mem_list) {
+        printf("\nLeak details:\n");
+        for (MemEntry* e = mem_list; e; e = e->next) {
+            printf("  %p: %zu bytes allocated at %s:%d\n",
+                   e->ptr, e->size, e->file, e->line);
+        }
+    }
+}
+
+#define malloc(size) debug_malloc(size, __FILE__, __LINE__)
+#define free(ptr) debug_free(ptr, __FILE__, __LINE__)
+
+// Call at program exit
+atexit(debug_report_leaks);
+
+#endif // DEBUG_MEMORY
+\end{lstlisting}
+
+\section{Testing with Mocks and Stubs}
+
+Replace dependencies for isolated testing:
+
+\begin{lstlisting}
+// Production code
+typedef struct {
+    int (*read)(void* handle);
+    int (*write)(void* handle, int data);
+} IOInterface;
+
+int process_data(IOInterface* io, void* handle) {
+    int data = io->read(handle);
+    if (data < 0) return -1;
+
+    data *= 2;  // Process
+
+    return io->write(handle, data);
+}
+
+// Mock implementation for testing
+static int mock_read_value = 42;
+static int mock_write_called = 0;
+static int mock_write_last_value = 0;
+
+int mock_read(void* handle) {
+    return mock_read_value;
+}
+
+int mock_write(void* handle, int data) {
+    mock_write_called++;
+    mock_write_last_value = data;
+    return 0;
+}
+
+// Test using mocks
+TEST(process_data_doubles_value) {
+    IOInterface mock_io = {
+        .read = mock_read,
+        .write = mock_write
+    };
+
+    mock_read_value = 21;
+    mock_write_called = 0;
+
+    int result = process_data(&mock_io, NULL);
+
+    ASSERT_EQ(result, 0);
+    ASSERT_EQ(mock_write_called, 1);
+    ASSERT_EQ(mock_write_last_value, 42);
+}
+\end{lstlisting}
+
+\section{Assertion Patterns}
+
+Use assertions to catch bugs early:
+
+\begin{lstlisting}
+#include <assert.h>
+
+// Debug-only assertions (disabled with NDEBUG)
+void process_array(int* arr, size_t len) {
+    assert(arr != NULL);
+    assert(len > 0);
+
+    // Process array...
+}
+
+// Always-on assertions for critical checks
+#define REQUIRE(cond) do { \
+    if (!(cond)) { \
+        fprintf(stderr, "Requirement failed: %s\n", #cond); \
+        fprintf(stderr, "  at %s:%d in %s\n", \
+                __FILE__, __LINE__, __func__); \
+        abort(); \
+    } \
+} while(0)
+
+// Compile-time assertions
+#define STATIC_ASSERT(cond, msg) \
+    typedef char static_assertion_##msg[(cond) ? 1 : -1]
+
+STATIC_ASSERT(sizeof(int) == 4, int_must_be_4_bytes);
+STATIC_ASSERT(sizeof(void*) == 8, need_64bit_platform);
+
+// C11 static assert
+_Static_assert(sizeof(int) >= 4, "int too small");
+\end{lstlisting}
+
+\section{Debugging Print Utilities}
+
+Make debugging easier with helper functions:
+
+\begin{lstlisting}
+// Hexdump for binary data
+void hexdump(const void* data, size_t size) {
+    const unsigned char* bytes = data;
+
+    for (size_t i = 0; i < size; i++) {
+        if (i % 16 == 0) {
+            printf("\n%04zx: ", i);
+        }
+        printf("%02x ", bytes[i]);
+
+        if ((i + 1) % 16 == 0 || i == size - 1) {
+            // Print ASCII
+            size_t start = i - (i % 16);
+            size_t end = i + 1;
+            printf(" ");
+            for (size_t j = start; j < end; j++) {
+                char c = bytes[j];
+                printf("%c", (c >= 32 && c < 127) ? c : '.');
+            }
+        }
+    }
+    printf("\n");
+}
+
+// Print binary representation
+void print_binary(unsigned int n) {
+    for (int i = 31; i >= 0; i--) {
+        printf("%d", (n >> i) & 1);
+        if (i % 8 == 0) printf(" ");
+    }
+    printf("\n");
+}
+
+// Dump struct bytes
+#define DUMP_STRUCT(s) do { \
+    printf("%s = {\n", #s); \
+    unsigned char* bytes = (unsigned char*)&(s); \
+    for (size_t i = 0; i < sizeof(s); i++) { \
+        printf("  [%zu] = 0x%02x", i, bytes[i]); \
+        if (i % 8 == 7) printf("\n"); \
+    } \
+    printf("\n}\n"); \
+} while(0)
+
+// Stack trace (GCC/Clang)
+#include <execinfo.h>
+
+void print_stack_trace(void) {
+    void* array[10];
+    size_t size = backtrace(array, 10);
+    char** strings = backtrace_symbols(array, size);
+
+    printf("Stack trace:\n");
+    for (size_t i = 0; i < size; i++) {
+        printf("  [%zu] %s\n", i, strings[i]);
+    }
+    free(strings);
+}
+\end{lstlisting}
+
+\section{Debugging with GDB}
+
+Essential GDB commands and patterns:
+
+\begin{lstlisting}
+// Compile with debug symbols
+// gcc -g -O0 program.c -o program
+
+// Common GDB commands:
+// gdb ./program
+// (gdb) break main
+// (gdb) run
+// (gdb) next          # Step over
+// (gdb) step          # Step into
+// (gdb) continue      # Continue execution
+// (gdb) print var     # Print variable
+// (gdb) backtrace     # Stack trace
+// (gdb) frame 2       # Switch to stack frame
+// (gdb) info locals   # Show local variables
+// (gdb) watch var     # Break when var changes
+// (gdb) quit
+
+// Conditional breakpoint
+// (gdb) break myfile.c:42 if x > 100
+
+// Print macro expansions
+// (gdb) macro expand MY_MACRO(x)
+\end{lstlisting}
+
+\subsection{GDB Helper Functions}
+
+\begin{lstlisting}
+// Add to ~/.gdbinit
+
+define plist
+    set var $n = $arg0
+    while $n
+        print *$n
+        set var $n = $n->next
+    end
+end
+document plist
+Print linked list starting from node.
+Usage: plist head_node
+end
+
+define parray
+    set var $i = 0
+    while $i < $arg1
+        print $arg0[$i]
+        set var $i = $i + 1
+    end
+end
+document parray
+Print array elements.
+Usage: parray array_name count
+end
+\end{lstlisting}
+
+\section{Sanitizers}
+
+Modern compilers include powerful bug detectors:
+
+\subsection{AddressSanitizer (ASan)}
+
+\begin{lstlisting}
+// Compile with:
+// gcc -fsanitize=address -g program.c -o program
+
+// Detects:
+// - Buffer overflows
+// - Use after free
+// - Memory leaks
+// - Use after return
+
+// Example bug it catches:
+int* create_array(void) {
+    int arr[10];
+    return arr;  // ASan catches use-after-return!
+}
+\end{lstlisting}
+
+\subsection{UndefinedBehaviorSanitizer (UBSan)}
+
+\begin{lstlisting}
+// Compile with:
+// gcc -fsanitize=undefined -g program.c -o program
+
+// Detects:
+// - Integer overflow
+// - Division by zero
+// - NULL pointer dereference
+// - Misaligned access
+
+// Example:
+int x = INT_MAX;
+x++;  // UBSan catches overflow!
+\end{lstlisting}
+
+\subsection{MemorySanitizer (MSan)}
+
+\begin{lstlisting}
+// Compile with:
+// clang -fsanitize=memory -g program.c -o program
+
+// Detects uninitialized memory reads:
+int x;
+if (x > 0) {  // MSan catches uninitialized read!
+    printf("Positive\n");
+}
+\end{lstlisting}
+
+\section{Valgrind}
+
+The classic memory debugger:
+
+\begin{lstlisting}
+// Run with Valgrind:
+// valgrind --leak-check=full ./program
+
+// Example output for memory leak:
+// ==12345== 100 bytes in 1 blocks are definitely lost
+// ==12345==    at 0x4C2FB0F: malloc
+// ==12345==    by 0x10918E: main (program.c:42)
+
+// Common Valgrind options:
+// --leak-check=full        # Detailed leak info
+// --show-leak-kinds=all    # Show all leak types
+// --track-origins=yes      # Track uninitialized values
+// --verbose                # More information
+\end{lstlisting}
+
+\section{Fuzz Testing}
+
+Find bugs by throwing random inputs:
+
+\begin{lstlisting}
+// Simple fuzzer
+void fuzz_test_parser(void) {
+    for (int i = 0; i < 10000; i++) {
+        // Generate random input
+        size_t len = rand() % 1000;
+        char* input = malloc(len + 1);
+
+        for (size_t j = 0; j < len; j++) {
+            input[j] = rand() % 256;
+        }
+        input[len] = '\0';
+
+        // Test parser - should not crash
+        parse_input(input);
+
+        free(input);
+    }
+}
+
+// Using AFL (American Fuzzy Lop)
+// afl-gcc program.c -o program
+// afl-fuzz -i input_dir -o output_dir ./program @@
+\end{lstlisting}
+
+\section{Test-Driven Development in C}
+
+Write tests first:
+
+\begin{lstlisting}
+// 1. Write test first
+TEST(parse_integer) {
+    int result;
+    ASSERT_EQ(parse_int("123", &result), 0);
+    ASSERT_EQ(result, 123);
+
+    ASSERT_EQ(parse_int("-456", &result), 0);
+    ASSERT_EQ(result, -456);
+
+    ASSERT_EQ(parse_int("abc", &result), -1);  // Should fail
+}
+
+// 2. Watch it fail (no implementation yet)
+
+// 3. Implement minimal code to pass
+int parse_int(const char* str, int* out) {
+    char* end;
+    long val = strtol(str, &end, 10);
+
+    if (end == str || *end != '\0') {
+        return -1;
+    }
+
+    *out = (int)val;
+    return 0;
+}
+
+// 4. Test passes - refactor if needed
+\end{lstlisting}
+
+\section{Coverage Testing}
+
+Ensure tests exercise all code:
+
+\begin{lstlisting}
+// Compile with coverage:
+// gcc -fprofile-arcs -ftest-coverage program.c -o program
+
+// Run tests:
+// ./program
+
+// Generate coverage report:
+// gcov program.c
+// lcov --capture --directory . --output-file coverage.info
+// genhtml coverage.info --output-directory coverage_html
+
+// View coverage_html/index.html in browser
+\end{lstlisting}
+
+\section{Integration Testing}
+
+Test components working together:
+
+\begin{lstlisting}
+TEST(full_system_test) {
+    // Setup
+    Database* db = database_create(":memory:");
+    Server* srv = server_create(8080);
+
+    // Test actual workflow
+    database_insert(db, "key1", "value1");
+
+    Request* req = request_create("GET", "/key1");
+    Response* resp = server_handle(srv, req);
+
+    ASSERT_EQ(resp->status, 200);
+    ASSERT_STR_EQ(resp->body, "value1");
+
+    // Cleanup
+    response_destroy(resp);
+    request_destroy(req);
+    server_destroy(srv);
+    database_destroy(db);
+}
+\end{lstlisting}
+
+\section{Summary}
+
+Testing and debugging in C:
+
+\begin{itemize}
+    \item Build your own simple test framework
+    \item Track memory allocations in debug builds
+    \item Use mocks to isolate components
+    \item Add assertions liberally
+    \item Use sanitizers during development
+    \item Run Valgrind regularly
+    \item Learn GDB thoroughly
+    \item Write tests first (TDD)
+    \item Measure test coverage
+    \item Fuzz test parsers and inputs
+\end{itemize}
+
+Testing is not optional in C—it's the difference between working code and disaster!

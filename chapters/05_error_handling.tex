@@ -1,0 +1,1180 @@
+\chapter{Error Handling Patterns}
+
+\section{The Challenge of Error Handling in C}
+
+Unlike languages with exceptions, C requires explicit error handling. Every function that can fail must communicate that failure to its caller, and callers must check for errors. This is tedious but powerful—you always know exactly where errors can occur.
+
+But here's what 20 years of C programming teaches you: error handling is where most bugs hide. Not in algorithms, not in data structures, but in the unglamorous code that handles failures. Production systems fail not because of clever code, but because someone forgot to check a return value. (Usually at 3 AM on a Friday. Always on a Friday.)
+
+The Linux kernel has more error handling code than any other kind. OpenSSL's worst bugs weren't in crypto algorithms, but in error paths. Every major C codebase spends 50-70\% of its code handling errors. This chapter teaches you the patterns that separate hobby code from production systems. (Spoiler: it's mostly the boring stuff that nobody wants to write but everybody needs.)
+
+\section{The errno Pattern: How UNIX Does It}
+
+The traditional UNIX approach: set a global error code.
+
+\begin{lstlisting}
+#include <errno.h>
+#include <string.h>
+#include <stdio.h>
+
+// Return -1 on error, set errno
+int my_function(const char* filename) {
+    FILE* f = fopen(filename, "r");
+    if (!f) {
+        // errno is already set by fopen
+        // Could be ENOENT, EACCES, EMFILE, etc.
+        return -1;
+    }
+
+    // ... do work ...
+
+    fclose(f);
+    return 0;
+}
+
+// Usage - ALWAYS check return value
+if (my_function("data.txt") == -1) {
+    // strerror converts errno to human-readable string
+    fprintf(stderr, "Error: %s\n", strerror(errno));
+    // perror prints to stderr with prefix
+    perror("my_function");
+}
+\end{lstlisting}
+
+\begin{notebox}
+The \texttt{errno} variable is thread-local in modern systems (POSIX.1-2001), so it's safe to use in multithreaded programs. On older systems, it was a global variable, which caused race conditions! (The '90s were a wild time for multithreading. We don't talk about it much.)
+\end{notebox}
+
+\subsection{How errno Actually Works}
+
+Here's what textbooks don't tell you:
+
+\begin{lstlisting}
+// In older systems (pre-threading):
+extern int errno;  // Global variable - NOT THREAD SAFE!
+
+// In modern systems (glibc, etc.):
+extern int *__errno_location(void);
+#define errno (*__errno_location())
+
+// Each thread has its own errno!
+// __errno_location() returns pointer to thread-local storage
+
+// In practice:
+void thread_func(void* arg) {
+    int fd = open("file.txt", O_RDONLY);
+    if (fd == -1) {
+        // This errno is THIS THREAD's errno
+        // Other threads' errno is unaffected
+        printf("Error: %s\n", strerror(errno));
+    }
+}
+
+// You must check errno IMMEDIATELY after error
+// Don't do this:
+if (open("file.txt", O_RDONLY) == -1) {
+    printf("Something\n");  // May call functions that change errno!
+    printf("Error: %s\n", strerror(errno));  // WRONG! May be different errno
+}
+
+// Do this:
+int fd = open("file.txt", O_RDONLY);
+if (fd == -1) {
+    int saved_errno = errno;  // Save immediately
+    printf("Something\n");
+    printf("Error: %s\n", strerror(saved_errno));  // Correct
+}
+\end{lstlisting}
+
+\subsection{Common errno Values Every C Programmer Must Know}
+
+\begin{lstlisting}
+#include <errno.h>
+
+// File/Directory errors
+ENOENT   // No such file or directory (most common!)
+EACCES   // Permission denied
+EISDIR   // Is a directory (tried to open dir as file)
+ENOTDIR  // Not a directory (tried to cd to file)
+EEXIST   // File exists (when O_CREAT | O_EXCL)
+ENAMETOOLONG  // Filename too long
+
+// Resource errors
+ENOMEM   // Out of memory (malloc failed)
+EMFILE   // Too many open files (process limit)
+ENFILE   // Too many open files (system limit)
+ENOSPC   // No space left on device
+EDQUOT   // Disk quota exceeded
+
+// I/O errors
+EAGAIN   // Resource temporarily unavailable (non-blocking I/O)
+EWOULDBLOCK  // Same as EAGAIN on most systems
+EINTR    // Interrupted system call (by signal)
+EIO      // I/O error (hardware problem)
+EPIPE    // Broken pipe (wrote to closed socket)
+
+// Invalid input
+EINVAL   // Invalid argument
+EBADF    // Bad file descriptor
+EFAULT   // Bad address (invalid pointer)
+ERANGE   // Result too large (math functions)
+
+// Network errors
+ECONNREFUSED  // Connection refused
+ETIMEDOUT     // Connection timed out
+ENETUNREACH   // Network unreachable
+EHOSTUNREACH  // Host unreachable
+
+// Operation errors
+EPERM    // Operation not permitted (need root)
+EBUSY    // Device or resource busy
+EDEADLK  // Resource deadlock avoided
+ENODEV   // No such device
+EXDEV    // Cross-device link (can't mv across filesystems)
+\end{lstlisting}
+
+\subsection{The EINTR Problem: Restarting System Calls}
+
+Here's a production gotcha that bites everyone:
+
+\begin{lstlisting}
+// WRONG - doesn't handle EINTR
+ssize_t n = read(fd, buffer, size);
+if (n == -1) {
+    fprintf(stderr, "Read failed: %s\n", strerror(errno));
+    return -1;
+}
+
+// PROBLEM: If a signal arrives during read(), it returns -1
+// with errno=EINTR. This is NOT an error - just retry!
+
+// CORRECT - restart interrupted system calls
+ssize_t read_restart(int fd, void* buf, size_t count) {
+    ssize_t n;
+    do {
+        n = read(fd, buf, count);
+    } while (n == -1 && errno == EINTR);
+    return n;
+}
+
+// Or use SA_RESTART flag when setting up signal handlers:
+struct sigaction sa;
+sa.sa_handler = my_signal_handler;
+sa.sa_flags = SA_RESTART;  // Automatically restart system calls
+sigaction(SIGINT, &sa, NULL);
+
+// Functions that can return EINTR:
+// - read(), write(), open()
+// - accept(), connect(), recv(), send()
+// - wait(), waitpid()
+// - sleep(), nanosleep()
+// - select(), poll(), epoll_wait()
+
+// This is REQUIRED for robust server code!
+// Ignore EINTR, enjoy mysterious production failures. Your choice.
+\end{lstlisting}
+
+\section{Return Codes: The Foundation}
+
+\subsection{Pattern 1: Return Value, Special Value for Error}
+
+\begin{lstlisting}
+// Works when you have a sentinel value
+FILE* fopen(const char* path, const char* mode);
+// Returns: Valid pointer or NULL on error
+
+void* malloc(size_t size);
+// Returns: Valid pointer or NULL on error
+
+int open(const char* path, int flags);
+// Returns: File descriptor (>=0) or -1 on error
+
+// PROBLEM: What if all values are valid?
+int parse_int(const char* str);
+// Can't return -1 for error - might be valid input!
+// Can't return 0 - might be valid input!
+
+// SOLUTION: Use output parameter pattern (see below)
+\end{lstlisting}
+
+\subsection{Pattern 2: Return Status, Output via Pointer (The Professional Way)}
+
+\begin{lstlisting}
+// Return status code, output via pointer
+// 0 = success, negative = error
+int parse_int_safe(const char* str, int* result) {
+    if (!str || !result) return -EINVAL;  // Invalid argument
+
+    char* endptr;
+    errno = 0;
+    long val = strtol(str, &endptr, 10);
+
+    if (errno == ERANGE) {
+        return -ERANGE;  // Overflow
+    }
+    if (endptr == str) {
+        return -EINVAL;  // No conversion
+    }
+    if (*endptr != '\0') {
+        return -EINVAL;  // Extra characters
+    }
+    if (val < INT_MIN || val > INT_MAX) {
+        return -ERANGE;  // Out of range
+    }
+
+    *result = (int)val;
+    return 0;  // Success
+}
+
+// Usage
+int value;
+int ret = parse_int_safe("123", &value);
+if (ret == 0) {
+    printf("Parsed: %d\n", value);
+} else {
+    fprintf(stderr, "Parse error: %s\n", strerror(-ret));
+}
+
+// This pattern is used throughout:
+// - POSIX APIs (pthread_create, etc.)
+// - Linux kernel
+// - Most professional C libraries
+\end{lstlisting}
+
+\begin{tipbox}
+Linux kernel convention: Return negative errno values for errors (e.g., -EINVAL, -ENOMEM). This makes it easy to propagate errors while maintaining errno semantics. User space does the opposite (return -1, set errno), but the kernel way is often cleaner for library code.
+\end{tipbox}
+
+\subsection{Pattern 3: Multiple Output Parameters}
+
+\begin{lstlisting}
+// Return status, multiple outputs via pointers
+int parse_url(const char* url,
+              char** scheme,    // Output: "http", "https", etc.
+              char** host,      // Output: "example.com"
+              int* port,        // Output: 80, 443, etc.
+              char** path) {    // Output: "/index.html"
+
+    if (!url) return -EINVAL;
+
+    // Validate outputs are provided
+    if (!scheme || !host || !port || !path) {
+        return -EINVAL;
+    }
+
+    // Parse URL...
+    *scheme = strdup("http");
+    *host = strdup("example.com");
+    *port = 80;
+    *path = strdup("/index.html");
+
+    return 0;  // Success
+}
+
+// Usage
+char *scheme, *host, *path;
+int port;
+
+if (parse_url("http://example.com/index.html",
+              &scheme, &host, &port, &path) == 0) {
+    printf("Scheme: %s, Host: %s, Port: %d, Path: %s\n",
+           scheme, host, port, path);
+
+    // Caller must free allocated strings
+    free(scheme);
+    free(host);
+    free(path);
+} else {
+    fprintf(stderr, "Invalid URL\n");
+}
+\end{lstlisting}
+
+\section{The Goto Cleanup Pattern (Linux Kernel Style)}
+
+One of the few legitimate uses of \texttt{goto} in modern C:
+
+\begin{lstlisting}
+int process_file(const char* filename) {
+    FILE* input = NULL;
+    FILE* output = NULL;
+    char* buffer = NULL;
+    int result = -1;
+
+    input = fopen(filename, "r");
+    if (!input) {
+        fprintf(stderr, "Cannot open input: %s\n", strerror(errno));
+        goto cleanup;
+    }
+
+    output = fopen("output.txt", "w");
+    if (!output) {
+        fprintf(stderr, "Cannot open output: %s\n", strerror(errno));
+        goto cleanup;
+    }
+
+    buffer = malloc(4096);
+    if (!buffer) {
+        fprintf(stderr, "Out of memory\n");
+        goto cleanup;
+    }
+
+    // ... do work ...
+    // If error occurs, just goto cleanup
+
+    size_t n = fread(buffer, 1, 4096, input);
+    if (ferror(input)) {
+        fprintf(stderr, "Read error\n");
+        goto cleanup;
+    }
+
+    if (fwrite(buffer, 1, n, output) != n) {
+        fprintf(stderr, "Write error\n");
+        goto cleanup;
+    }
+
+    result = 0;  // Success
+
+cleanup:
+    // Cleanup happens in REVERSE ORDER of allocation
+    // This is critical! (LIFO - like stack unwinding)
+    free(buffer);
+    if (output) fclose(output);
+    if (input) fclose(input);
+
+    return result;
+}
+\end{lstlisting}
+
+\begin{notebox}
+This is the STANDARD pattern in the Linux kernel! Search the kernel source for "goto out" or "goto error". Linus Torvalds himself advocates this pattern. It ensures cleanup happens correctly and avoids deeply nested error handling. When Linus says goto is okay, goto is okay. (Though your CS professor might still have nightmares.)
+\end{notebox}
+
+\subsection{Why Goto Is Better Than Nested Ifs}
+
+\begin{lstlisting}
+// WITHOUT goto - deeply nested, hard to maintain
+int process_file_nested(const char* filename) {
+    FILE* input = fopen(filename, "r");
+    if (input) {
+        FILE* output = fopen("output.txt", "w");
+        if (output) {
+            char* buffer = malloc(4096);
+            if (buffer) {
+                // ... do work ...
+                size_t n = fread(buffer, 1, 4096, input);
+                if (!ferror(input)) {
+                    if (fwrite(buffer, 1, n, output) == n) {
+                        // Success - way down here
+                        free(buffer);
+                        fclose(output);
+                        fclose(input);
+                        return 0;
+                    }
+                }
+                free(buffer);
+            }
+            fclose(output);
+        }
+        fclose(input);
+    }
+    return -1;
+}
+
+// Problems with nested approach:
+// 1. Rightward drift - code disappears off screen
+// 2. Hard to add new resources (good luck finding where to insert it)
+// 3. Easy to mess up cleanup order (and you will)
+// 4. Success path is buried deep (like treasure, but less fun)
+// 5. Code duplication for cleanup (copy-paste is not a design pattern)
+\end{lstlisting}
+
+\subsection{Advanced: Multiple Cleanup Labels}
+
+\begin{lstlisting}
+// For complex cleanup with different paths
+int complex_operation(void) {
+    int fd = -1;
+    char* buffer = NULL;
+    struct data* obj = NULL;
+    int result = -1;
+
+    fd = open("file.txt", O_RDONLY);
+    if (fd == -1) {
+        goto out;  // Nothing to clean up
+    }
+
+    buffer = malloc(4096);
+    if (!buffer) {
+        goto close_fd;  // Only close fd
+    }
+
+    obj = create_object();
+    if (!obj) {
+        goto free_buffer;  // Free buffer and close fd
+    }
+
+    // ... do work ...
+
+    if (some_operation(obj) != 0) {
+        goto destroy_object;  // Full cleanup
+    }
+
+    result = 0;  // Success
+
+destroy_object:
+    destroy_object(obj);
+free_buffer:
+    free(buffer);
+close_fd:
+    close(fd);
+out:
+    return result;
+}
+
+// This is how the kernel handles complex cleanup
+// Labels named by what they clean up
+\end{lstlisting}
+
+\section{Error Context Pattern: Rich Error Information}
+
+\begin{lstlisting}
+// Error structure with context
+typedef struct {
+    int code;           // Error code (errno-like)
+    char message[256];  // Human-readable message
+    const char* file;   // Source file where error occurred
+    int line;           // Line number
+    const char* func;   // Function name
+} Error;
+
+// Macro for setting errors with source location
+#define SET_ERROR(err, code_, fmt, ...) do { \
+    if (err) { \
+        (err)->code = (code_); \
+        snprintf((err)->message, sizeof((err)->message), \
+                 fmt, ##__VA_ARGS__); \
+        (err)->file = __FILE__; \
+        (err)->line = __LINE__; \
+        (err)->func = __func__; \
+    } \
+} while(0)
+
+int risky_operation(const char* input, Error* err) {
+    if (!input) {
+        SET_ERROR(err, -EINVAL, "Input is NULL");
+        return -1;
+    }
+
+    if (strlen(input) == 0) {
+        SET_ERROR(err, -EINVAL, "Input is empty");
+        return -1;
+    }
+
+    FILE* f = fopen(input, "r");
+    if (!f) {
+        SET_ERROR(err, -errno, "Cannot open '%s': %s",
+                  input, strerror(errno));
+        return -1;
+    }
+
+    // ... do work ...
+
+    fclose(f);
+    return 0;
+}
+
+// Usage with detailed error reporting
+Error err;
+if (risky_operation(data, &err) != 0) {
+    fprintf(stderr, "Error %d: %s\n", err.code, err.message);
+    fprintf(stderr, "  at %s() in %s:%d\n",
+            err.func, err.file, err.line);
+}
+\end{lstlisting}
+
+\subsection{Error Chains: Preserving Error Context}
+
+\begin{lstlisting}
+// Chain errors as they propagate up the stack
+#define MAX_ERROR_CHAIN 10
+
+typedef struct {
+    int depth;
+    struct {
+        int code;
+        char message[128];
+        const char* file;
+        int line;
+    } chain[MAX_ERROR_CHAIN];
+} ErrorChain;
+
+#define ERROR_CHAIN_PUSH(ec, code_, fmt, ...) do { \
+    if ((ec) && (ec)->depth < MAX_ERROR_CHAIN) { \
+        int idx = (ec)->depth++; \
+        (ec)->chain[idx].code = (code_); \
+        snprintf((ec)->chain[idx].message, \
+                 sizeof((ec)->chain[idx].message), \
+                 fmt, ##__VA_ARGS__); \
+        (ec)->chain[idx].file = __FILE__; \
+        (ec)->chain[idx].line = __LINE__; \
+    } \
+} while(0)
+
+// Low-level function
+int read_config_file(const char* path, ErrorChain* ec) {
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        ERROR_CHAIN_PUSH(ec, errno, "fopen failed: %s", strerror(errno));
+        return -1;
+    }
+    // ...
+    fclose(f);
+    return 0;
+}
+
+// Mid-level function
+int load_config(const char* path, ErrorChain* ec) {
+    if (read_config_file(path, ec) != 0) {
+        ERROR_CHAIN_PUSH(ec, -1, "Failed to load config from '%s'", path);
+        return -1;
+    }
+    return 0;
+}
+
+// High-level function
+int initialize_system(ErrorChain* ec) {
+    if (load_config("/etc/myapp.conf", ec) != 0) {
+        ERROR_CHAIN_PUSH(ec, -1, "System initialization failed");
+        return -1;
+    }
+    return 0;
+}
+
+// Usage - get full error trace!
+ErrorChain ec = {0};
+if (initialize_system(&ec) != 0) {
+    fprintf(stderr, "Error trace (most recent first):\n");
+    for (int i = ec.depth - 1; i >= 0; i--) {
+        fprintf(stderr, "  [%d] %s (at %s:%d)\n",
+                ec.chain[i].code,
+                ec.chain[i].message,
+                ec.chain[i].file,
+                ec.chain[i].line);
+    }
+}
+
+// Output:
+// Error trace (most recent first):
+//   [-1] System initialization failed (at main.c:123)
+//   [-1] Failed to load config from '/etc/myapp.conf' (at config.c:45)
+//   [2] fopen failed: No such file or directory (at config.c:12)
+\end{lstlisting}
+
+\section{Result Type Pattern}
+
+\begin{lstlisting}
+// Generic result type with status and value
+typedef struct {
+    int status;  // 0 = success, <0 = error code
+    int value;   // Valid only if status == 0
+} IntResult;
+
+typedef struct {
+    int status;
+    void* ptr;
+} PtrResult;
+
+IntResult divide(int a, int b) {
+    IntResult result;
+    if (b == 0) {
+        result.status = -EINVAL;
+        result.value = 0;
+        return result;
+    }
+    result.status = 0;
+    result.value = a / b;
+    return result;
+}
+
+// Usage
+IntResult r = divide(10, 2);
+if (r.status == 0) {
+    printf("Result: %d\n", r.value);
+} else {
+    fprintf(stderr, "Error: %s\n", strerror(-r.status));
+}
+\end{lstlisting}
+
+\subsection{Generic Result with Union}
+
+\begin{lstlisting}
+// Tagged union for different result types
+typedef enum {
+    RESULT_INT,
+    RESULT_DOUBLE,
+    RESULT_PTR,
+    RESULT_STRING
+} ResultType;
+
+typedef struct {
+    int status;
+    ResultType type;
+    union {
+        int int_value;
+        double double_value;
+        void* ptr_value;
+        char string_value[256];
+    } data;
+} Result;
+
+Result read_config_int(const char* key) {
+    Result r = {0};
+    r.type = RESULT_INT;
+
+    // ... read config ...
+    int value;
+    if (found) {
+        r.status = 0;
+        r.data.int_value = value;
+    } else {
+        r.status = -ENOENT;
+    }
+    return r;
+}
+
+// Usage
+Result r = read_config_int("port");
+if (r.status == 0) {
+    printf("Port: %d\n", r.data.int_value);
+}
+\end{lstlisting}
+
+\section{Error Callback Pattern: Let Users Handle Errors}
+
+\begin{lstlisting}
+// Error severity levels
+typedef enum {
+    ERR_DEBUG,
+    ERR_INFO,
+    ERR_WARN,
+    ERR_ERROR,
+    ERR_FATAL
+} ErrorLevel;
+
+typedef void (*ErrorHandler)(ErrorLevel level, int code,
+                             const char* message,
+                             void* user_data);
+
+typedef struct {
+    ErrorHandler handler;
+    void* user_data;
+    ErrorLevel min_level;  // Only report >= this level
+} Library;
+
+void library_init(Library* lib, ErrorHandler handler,
+                  void* context, ErrorLevel min_level) {
+    lib->handler = handler;
+    lib->user_data = context;
+    lib->min_level = min_level;
+}
+
+void library_report_error(Library* lib, ErrorLevel level,
+                          int code, const char* fmt, ...) {
+    if (!lib || level < lib->min_level) return;
+
+    char message[512];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(message, sizeof(message), fmt, args);
+    va_end(args);
+
+    if (lib->handler) {
+        lib->handler(level, code, message, lib->user_data);
+    } else {
+        // Default: print to stderr
+        const char* level_str[] = {
+            "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
+        };
+        fprintf(stderr, "[%s] %s (code %d)\n",
+                level_str[level], message, code);
+    }
+
+    if (level == ERR_FATAL) {
+        abort();  // Fatal errors terminate
+    }
+}
+
+// User's error handler - log to file
+void my_error_handler(ErrorLevel level, int code,
+                      const char* msg, void* data) {
+    FILE* log = (FILE*)data;
+    time_t now = time(NULL);
+    fprintf(log, "[%ld] Level %d, Code %d: %s\n",
+            now, level, code, msg);
+    fflush(log);
+}
+
+// Usage
+FILE* log = fopen("error.log", "a");
+Library lib;
+library_init(&lib, my_error_handler, log, ERR_WARN);
+
+// Now all errors go to log file
+library_report_error(&lib, ERR_ERROR, errno,
+                     "Failed to connect: %s", strerror(errno));
+\end{lstlisting}
+
+\section{Defensive Programming: Preconditions and Postconditions}
+
+\begin{lstlisting}
+#include <assert.h>
+
+// Use assert for programmer errors (bugs)
+// Use return codes for runtime errors (user input, I/O, etc.)
+
+void process_data(const char* data, size_t len) {
+    // Preconditions - these are bugs if violated
+    assert(data != NULL);  // Programmer error - should never happen
+    assert(len > 0);       // Programmer error - caller's fault
+
+    // But still validate for production
+    #ifndef NDEBUG
+    if (!data || len == 0) {
+        fprintf(stderr, "BUG: Invalid parameters to process_data\n");
+        abort();
+    }
+    #endif
+
+    // Runtime errors - these CAN happen
+    int fd = open("output.txt", O_WRONLY);
+    if (fd == -1) {
+        // This is NOT a bug - file might not exist
+        fprintf(stderr, "Error: %s\n", strerror(errno));
+        return;  // Handle gracefully
+    }
+
+    // ... process data ...
+
+    close(fd);
+
+    // Postcondition
+    assert(all_data_processed);  // Verify our logic is correct
+}
+
+// Design by Contract macros
+#define REQUIRE(cond) do { \
+    if (!(cond)) { \
+        fprintf(stderr, "Precondition failed: %s\n" \
+                        "  at %s:%d in %s\n", \
+                #cond, __FILE__, __LINE__, __func__); \
+        abort(); \
+    } \
+} while(0)
+
+#define ENSURE(cond) do { \
+    if (!(cond)) { \
+        fprintf(stderr, "Postcondition failed: %s\n" \
+                        "  at %s:%d in %s\n", \
+                #cond, __FILE__, __LINE__, __func__); \
+        abort(); \
+    } \
+} while(0)
+
+#define INVARIANT(cond) ENSURE(cond)
+
+// Usage
+int divide(int a, int b) {
+    REQUIRE(b != 0);  // Precondition
+
+    int result = a / b;
+
+    ENSURE(result * b <= a);  // Postcondition (integer division)
+    ENSURE(result * b + (a % b) == a);  // Exact postcondition
+
+    return result;
+}
+\end{lstlisting}
+
+\section{Retry Logic: Handling Transient Failures}
+
+\begin{lstlisting}
+#include <unistd.h>
+#include <time.h>
+#include <math.h>
+
+// Simple retry with fixed delay
+int retry_operation(int (*operation)(void* data), void* data,
+                    int max_retries, int delay_seconds) {
+    for (int i = 0; i < max_retries; i++) {
+        int result = operation(data);
+        if (result == 0) {
+            return 0;  // Success
+        }
+
+        // Don't sleep after last attempt
+        if (i < max_retries - 1) {
+            fprintf(stderr, "Attempt %d/%d failed, retrying in %ds...\n",
+                    i + 1, max_retries, delay_seconds);
+            sleep(delay_seconds);
+        }
+    }
+
+    fprintf(stderr, "Failed after %d attempts\n", max_retries);
+    return -1;  // All retries failed
+}
+
+// Exponential backoff with jitter (for network operations)
+int retry_with_backoff(int (*operation)(void* data), void* data,
+                       int max_retries) {
+    int base_delay_ms = 100;  // Start with 100ms
+    int max_delay_ms = 30000; // Cap at 30 seconds
+
+    srand(time(NULL));
+
+    for (int i = 0; i < max_retries; i++) {
+        int result = operation(data);
+        if (result == 0) {
+            return 0;  // Success
+        }
+
+        if (i < max_retries - 1) {
+            // Exponential backoff: 100ms, 200ms, 400ms, 800ms, ...
+            int delay_ms = base_delay_ms * (1 << i);
+            if (delay_ms > max_delay_ms) {
+                delay_ms = max_delay_ms;
+            }
+
+            // Add jitter: random +/-25% to prevent thundering herd
+            // (When all servers retry at exactly the same time, nobody wins)
+            int jitter = (rand() % (delay_ms / 2)) - (delay_ms / 4);
+            delay_ms += jitter;
+
+            fprintf(stderr, "Attempt %d/%d failed, waiting %dms...\n",
+                    i + 1, max_retries, delay_ms);
+
+            usleep(delay_ms * 1000);  // usleep takes microseconds
+        }
+    }
+
+    return -1;
+}
+
+// Retry only on specific errors
+int retry_on_error(int (*operation)(void* data), void* data,
+                   int max_retries, const int* retry_errors, int num_errors) {
+    for (int i = 0; i < max_retries; i++) {
+        errno = 0;
+        int result = operation(data);
+        if (result == 0) {
+            return 0;  // Success
+        }
+
+        // Check if this error is retryable
+        int should_retry = 0;
+        for (int j = 0; j < num_errors; j++) {
+            if (errno == retry_errors[j]) {
+                should_retry = 1;
+                break;
+            }
+        }
+
+        if (!should_retry) {
+            fprintf(stderr, "Non-retryable error: %s\n", strerror(errno));
+            return -1;  // Give up immediately
+        }
+
+        if (i < max_retries - 1) {
+            fprintf(stderr, "Retryable error (%s), attempt %d/%d\n",
+                    strerror(errno), i + 1, max_retries);
+            sleep(1);
+        }
+    }
+
+    return -1;
+}
+
+// Usage
+int connect_to_server(void* data) {
+    // ... connection logic ...
+    return -1;  // Simulate failure
+}
+
+// Retry only on temporary network errors
+int retryable_errors[] = {ETIMEDOUT, ECONNREFUSED, ENETUNREACH};
+if (retry_on_error(connect_to_server, server_info, 5,
+                   retryable_errors, 3) != 0) {
+    fprintf(stderr, "Cannot connect after retries\n");
+}
+\end{lstlisting}
+
+\section{Error Recovery Strategies}
+
+\begin{lstlisting}
+typedef enum {
+    RECOVERY_RETRY,
+    RECOVERY_USE_DEFAULT,
+    RECOVERY_USE_CACHE,
+    RECOVERY_SKIP,
+    RECOVERY_ABORT
+} RecoveryStrategy;
+
+typedef struct {
+    RecoveryStrategy strategy;
+    int max_retries;
+    void* default_value;
+    void* cache;
+} RecoveryPolicy;
+
+int load_data_with_recovery(const char* path, Data* data,
+                             RecoveryPolicy* policy) {
+    int result = read_data(path, data);
+
+    if (result == 0) {
+        return 0;  // Success
+    }
+
+    // Error occurred - apply recovery strategy
+    fprintf(stderr, "Error loading %s: %s\n", path, strerror(errno));
+
+    switch (policy->strategy) {
+        case RECOVERY_RETRY:
+            fprintf(stderr, "Retrying...\n");
+            for (int i = 0; i < policy->max_retries; i++) {
+                sleep(1);
+                result = read_data(path, data);
+                if (result == 0) {
+                    fprintf(stderr, "Retry succeeded\n");
+                    return 0;
+                }
+            }
+            fprintf(stderr, "All retries failed\n");
+            return -1;
+
+        case RECOVERY_USE_DEFAULT:
+            fprintf(stderr, "Using default value\n");
+            if (policy->default_value) {
+                memcpy(data, policy->default_value, sizeof(Data));
+                return 0;  // Treat as success
+            }
+            return -1;
+
+        case RECOVERY_USE_CACHE:
+            fprintf(stderr, "Using cached value\n");
+            if (policy->cache) {
+                memcpy(data, policy->cache, sizeof(Data));
+                return 0;
+            }
+            return -1;
+
+        case RECOVERY_SKIP:
+            fprintf(stderr, "Skipping failed operation\n");
+            memset(data, 0, sizeof(Data));
+            return 0;  // Pretend success
+
+        case RECOVERY_ABORT:
+            fprintf(stderr, "Fatal error, aborting\n");
+            abort();
+
+        default:
+            return -1;
+    }
+}
+
+// Usage
+Data data;
+Data default_data = {/* defaults */};
+RecoveryPolicy policy = {
+    .strategy = RECOVERY_USE_DEFAULT,
+    .default_value = &default_data
+};
+
+load_data_with_recovery("/etc/config.txt", &data, &policy);
+\end{lstlisting}
+
+\section{Logging Errors: Production-Grade Logging}
+
+\begin{lstlisting}
+typedef enum {
+    LOG_TRACE,
+    LOG_DEBUG,
+    LOG_INFO,
+    LOG_WARN,
+    LOG_ERROR,
+    LOG_FATAL
+} LogLevel;
+
+typedef struct {
+    FILE* file;
+    LogLevel level;
+    int use_colors;     // ANSI colors for terminal
+    int include_time;
+    int include_location;  // File:line
+    pthread_mutex_t mutex;  // Thread-safe logging
+} Logger;
+
+static Logger g_logger = {
+    .file = NULL,
+    .level = LOG_INFO,
+    .use_colors = 0,
+    .include_time = 1,
+    .include_location = 1,
+    .mutex = PTHREAD_MUTEX_INITIALIZER
+};
+
+void log_init(const char* path, LogLevel level, int use_colors) {
+    g_logger.file = path ? fopen(path, "a") : stderr;
+    g_logger.level = level;
+    g_logger.use_colors = use_colors && isatty(fileno(g_logger.file));
+    g_logger.include_time = 1;
+    g_logger.include_location = 1;
+}
+
+void log_message(LogLevel level, const char* file, int line,
+                 const char* func, const char* fmt, ...) {
+    if (level < g_logger.level) return;
+
+    pthread_mutex_lock(&g_logger.mutex);  // Because race conditions in logging are... ironic
+
+    FILE* out = g_logger.file ? g_logger.file : stderr;
+
+    // ANSI color codes
+    const char* colors[] = {
+        "\033[0;37m",  // TRACE - white
+        "\033[0;36m",  // DEBUG - cyan
+        "\033[0;32m",  // INFO - green
+        "\033[0;33m",  // WARN - yellow
+        "\033[0;31m",  // ERROR - red
+        "\033[1;31m"   // FATAL - bold red
+    };
+    const char* reset = "\033[0m";
+
+    const char* level_str[] = {
+        "TRACE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"
+    };
+
+    // Timestamp
+    if (g_logger.include_time) {
+        time_t now = time(NULL);
+        struct tm* tm_info = localtime(&now);
+        char time_buf[64];
+        strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", tm_info);
+        fprintf(out, "[%s] ", time_buf);
+    }
+
+    // Level with color
+    if (g_logger.use_colors) {
+        fprintf(out, "%s[%-5s]%s ", colors[level], level_str[level], reset);
+    } else {
+        fprintf(out, "[%-5s] ", level_str[level]);
+    }
+
+    // Location
+    if (g_logger.include_location) {
+        fprintf(out, "%s:%d in %s(): ", file, line, func);
+    }
+
+    // Message
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(out, fmt, args);
+    va_end(args);
+
+    fprintf(out, "\n");
+    fflush(out);
+
+    pthread_mutex_unlock(&g_logger.mutex);
+
+    if (level == LOG_FATAL) {
+        abort();
+    }
+}
+
+// Convenient macros
+#define LOG_TRACE(...) \
+    log_message(LOG_TRACE, __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define LOG_DEBUG(...) \
+    log_message(LOG_DEBUG, __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define LOG_INFO(...) \
+    log_message(LOG_INFO, __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define LOG_WARN(...) \
+    log_message(LOG_WARN, __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define LOG_ERROR(...) \
+    log_message(LOG_ERROR, __FILE__, __LINE__, __func__, __VA_ARGS__)
+#define LOG_FATAL(...) \
+    log_message(LOG_FATAL, __FILE__, __LINE__, __func__, __VA_ARGS__)
+
+void log_close(void) {
+    if (g_logger.file && g_logger.file != stderr) {
+        fclose(g_logger.file);
+        g_logger.file = NULL;
+    }
+}
+
+// Usage
+int main(void) {
+    log_init("app.log", LOG_DEBUG, 1);
+
+    LOG_INFO("Application started");
+    LOG_DEBUG("Debug value: %d", 42);
+
+    int fd = open("missing.txt", O_RDONLY);
+    if (fd == -1) {
+        LOG_ERROR("Cannot open file: %s", strerror(errno));
+    }
+
+    LOG_WARN("This is a warning");
+
+    log_close();
+    return 0;
+}
+
+// Output:
+// [2024-01-15 10:30:45] [INFO ] main.c:123 in main(): Application started
+// [2024-01-15 10:30:45] [DEBUG] main.c:124 in main(): Debug value: 42
+// [2024-01-15 10:30:45] [ERROR] main.c:128 in main(): Cannot open file: No such file or directory
+\end{lstlisting}
+
+\section{Best Practices from Production Systems}
+
+\begin{enumerate}
+    \item \textbf{Always check return values}: Every function that can fail (yes, ALL of them)
+    \item \textbf{Check errno immediately}: Save it if you need to call other functions
+    \item \textbf{Handle EINTR}: Restart interrupted system calls (or enjoy mysterious failures)
+    \item \textbf{Document error conditions}: In comments and headers
+    \item \textbf{Be consistent}: Use the same pattern throughout your codebase
+    \item \textbf{Use goto for cleanup}: Don't fight it - embrace the Linux kernel way
+    \item \textbf{Provide context}: Help users understand what went wrong and where
+    \item \textbf{Log errors}: At minimum, log them with timestamps and context
+    \item \textbf{Fail fast}: Detect errors as early as possible (before they metastasize)
+    \item \textbf{Validate inputs}: Check preconditions at function entry
+    \item \textbf{Test error paths}: Most bugs hide in error handling code (ironic, isn't it?)
+    \item \textbf{Use different severities}: DEBUG/INFO/WARN/ERROR/FATAL
+    \item \textbf{Clean up in reverse order}: LIFO - like stack unwinding
+    \item \textbf{Consider retry logic}: For transient failures (network, I/O)
+    \item \textbf{Thread safety matters}: Protect shared error state with mutexes
+\end{enumerate}
+
+\section{Summary}
+
+Error handling in C requires discipline and patterns:
+
+\begin{itemize}
+    \item Use return codes consistently (0 success, negative error)
+    \item Use \texttt{errno} for system call errors, check immediately
+    \item Always restart interrupted system calls (EINTR)
+    \item Use goto cleanup pattern for complex functions
+    \item Provide error context (code, message, location)
+    \item Implement retry logic with exponential backoff
+    \item Log errors with timestamps and severity levels
+    \item Test error paths as thoroughly as success paths
+    \item Document error conditions in API
+    \item Clean up resources in all paths (success and error)
+\end{itemize}
+
+Good error handling is what separates toy programs from production code. The Linux kernel has more error handling than any other kind of code. OpenSSL's worst bugs were in error paths. Redis, nginx, PostgreSQL - all spend 50-70\% of code on error handling. (The glamorous life of a C programmer: writing more cleanup code than actual features.)
+
+Master these patterns, and your code will be robust, debuggable, and maintainable. Your future self (and your team) will thank you when things go wrong at 3 AM and the logs tell you exactly what happened and where.
+
+\begin{tipbox}
+Error handling is not glamorous. It's tedious, verbose, and feels like busywork. But it's the difference between a demo and a product. Between "works on my machine" and "runs in production for years." Learn these patterns, make them automatic, and you'll write C code that professionals respect. (And you'll sleep better at night. Probably. Maybe. At least you'll know where to look when things inevitably break.)
+\end{tipbox}

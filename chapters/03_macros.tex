@@ -1,0 +1,495 @@
+\chapter{Macro Magic \& Pitfalls}
+
+\section{Macros: More Than You Think}
+
+Macros are C's preprocessor magic. They're not functions—they're text substitution that happens before compilation. This makes them powerful but dangerous.
+
+Think of macros as a find-and-replace tool that runs before your code is even seen by the compiler. This gives them unique capabilities but also unique dangers.
+
+\section{The Parentheses Rule}
+
+\begin{warningbox}
+Always wrap macro parameters and the entire expression in parentheses!
+\end{warningbox}
+
+\begin{lstlisting}
+// WRONG - breaks with complex expressions
+#define SQUARE(x) x * x
+
+int a = SQUARE(2 + 3);  // Expands to: 2 + 3 * 2 + 3 = 11!
+
+// CORRECT
+#define SQUARE(x) ((x) * (x))
+
+int b = SQUARE(2 + 3);  // Expands to: ((2 + 3) * (2 + 3)) = 25
+\end{lstlisting}
+
+\subsection{Why This Matters}
+
+\begin{lstlisting}
+// More subtle bugs
+#define DOUBLE(x) x + x
+
+int result = DOUBLE(5) * 2;  // Expands to: 5 + 5 * 2 = 15 (not 20!)
+
+// Always use parentheses
+#define DOUBLE(x) ((x) + (x))
+
+int result = DOUBLE(5) * 2;  // Expands to: ((5) + (5)) * 2 = 20
+\end{lstlisting}
+
+\section{Multi-Statement Macros}
+
+\begin{lstlisting}
+// WRONG - breaks in if statements
+#define SWAP(a, b) \
+    int temp = a; \
+    a = b; \
+    b = temp;
+
+// This breaks:
+if (x > y)
+    SWAP(x, y);  // Only first line is in if!
+// b = temp executes unconditionally!
+
+// CORRECT - use do-while(0) idiom
+#define SWAP(a, b) do { \
+    int temp = a; \
+    a = b; \
+    b = temp; \
+} while(0)
+
+// Now this works correctly
+if (x > y)
+    SWAP(x, y);  // All statements in the if
+\end{lstlisting}
+
+\begin{notebox}
+The \texttt{do-while(0)} trick is used everywhere in professional C. It creates a proper statement block that requires a semicolon after it, making the macro behave like a function call.
+\end{notebox}
+
+\subsection{Why do-while(0) Works}
+
+\begin{lstlisting}
+// The pattern
+do {
+    statement1;
+    statement2;
+    statement3;
+} while(0);  // Always false, executes once
+
+// Benefits:
+// 1. Multiple statements act as one
+// 2. Requires semicolon after macro call
+// 3. Works with if/else without braces
+// 4. Can use break to exit early
+\end{lstlisting}
+
+\section{Side Effects and Multiple Evaluation}
+
+\begin{warningbox}
+Macros evaluate their arguments every time they appear!
+\end{warningbox}
+
+\begin{lstlisting}
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
+int x = 5;
+int m = MAX(x++, 10);  // x gets incremented TWICE!
+// Expands to: ((x++) > (10) ? (x++) : (10))
+
+printf("x = %d\n", x);  // Could be 6 or 7!
+\end{lstlisting}
+
+\subsection{Solution: Statement Expressions (GCC/Clang)}
+
+\begin{lstlisting}
+// GCC/Clang extension
+#define MAX(a, b) ({ \
+    __typeof__(a) _a = (a); \
+    __typeof__(b) _b = (b); \
+    _a > _b ? _a : _b; \
+})
+
+// Now this works correctly
+int x = 5;
+int m = MAX(x++, 10);  // x incremented only once
+printf("x = %d, m = %d\n", x, m);  // x = 6, m = 10
+\end{lstlisting}
+
+\section{X-Macros: The Secret Weapon}
+
+X-Macros let you maintain a single list that generates multiple things. This is incredibly powerful!
+
+\begin{lstlisting}
+// Define your list once
+#define ERROR_CODES \
+    X(SUCCESS, 0, "Operation successful") \
+    X(ERR_NOMEM, 1, "Out of memory") \
+    X(ERR_INVALID, 2, "Invalid argument") \
+    X(ERR_IO, 3, "I/O error") \
+    X(ERR_TIMEOUT, 4, "Operation timed out")
+
+// Generate enum
+#define X(name, code, msg) name = code,
+typedef enum {
+    ERROR_CODES
+} ErrorCode;
+#undef X
+
+// Generate string array
+#define X(name, code, msg) msg,
+static const char* error_messages[] = {
+    ERROR_CODES
+};
+#undef X
+
+// Generate name array
+#define X(name, code, msg) #name,
+static const char* error_names[] = {
+    ERROR_CODES
+};
+#undef X
+
+// Now you can use it:
+const char* get_error_message(ErrorCode code) {
+    if (code >= 0 && code < sizeof(error_messages)/sizeof(error_messages[0])) {
+        return error_messages[code];
+    }
+    return "Unknown error";
+}
+
+const char* get_error_name(ErrorCode code) {
+    if (code >= 0 && code < sizeof(error_names)/sizeof(error_names[0])) {
+        return error_names[code];
+    }
+    return "UNKNOWN";
+}
+\end{lstlisting}
+
+\begin{tipbox}
+X-Macros are used in the Linux kernel and many professional projects. They eliminate duplication and keep related code in sync automatically. Add a new error? Just add one line to the X-Macro list!
+\end{tipbox}
+
+\subsection{More X-Macro Examples}
+
+\begin{lstlisting}
+// Command dispatch table
+#define COMMANDS \
+    X(quit, "Exit the program") \
+    X(help, "Show help message") \
+    X(save, "Save current state") \
+    X(load, "Load saved state")
+
+// Generate function declarations
+#define X(name, desc) void cmd_##name(void);
+COMMANDS
+#undef X
+
+// Generate command table
+typedef struct {
+    const char* name;
+    const char* description;
+    void (*handler)(void);
+} Command;
+
+#define X(name, desc) {#name, desc, cmd_##name},
+Command commands[] = {
+    COMMANDS
+};
+#undef X
+\end{lstlisting}
+
+\section{Stringification and Token Pasting}
+
+\subsection{Stringification (\#)}
+
+\begin{lstlisting}
+// # makes a string literal
+#define STR(x) #x
+
+STR(hello)        // Becomes "hello"
+STR(x + y)        // Becomes "x + y"
+STR(123)          // Becomes "123"
+
+// Practical use: debugging
+#define PRINT_VAR(x) printf(#x " = %d\n", (x))
+
+int age = 25;
+PRINT_VAR(age);  // Prints: age = 25
+\end{lstlisting}
+
+\subsection{Token Pasting (\#\#)}
+
+\begin{lstlisting}
+// ## pastes tokens together
+#define CONCAT(a, b) a##b
+
+CONCAT(my_, function)  // Becomes my_function
+CONCAT(x, 123)         // Becomes x123
+
+// Practical use: automatic function names
+#define DECLARE_GETTER_SETTER(type, name) \
+    type get_##name(void) { \
+        return name; \
+    } \
+    void set_##name(type value) { \
+        name = value; \
+    }
+
+int age;
+DECLARE_GETTER_SETTER(int, age)
+// Generates: get_age() and set_age()
+\end{lstlisting}
+
+\subsection{Advanced Token Pasting}
+
+\begin{lstlisting}
+// Generic type-safe array
+#define DEFINE_ARRAY(type) \
+    typedef struct { \
+        type* data; \
+        size_t size; \
+        size_t capacity; \
+    } type##_array_t; \
+    \
+    type##_array_t* type##_array_create(void) { \
+        type##_array_t* arr = malloc(sizeof(type##_array_t)); \
+        arr->data = NULL; \
+        arr->size = 0; \
+        arr->capacity = 0; \
+        return arr; \
+    } \
+    \
+    void type##_array_push(type##_array_t* arr, type value) { \
+        if (arr->size >= arr->capacity) { \
+            arr->capacity = arr->capacity ? arr->capacity * 2 : 8; \
+            arr->data = realloc(arr->data, arr->capacity * sizeof(type)); \
+        } \
+        arr->data[arr->size++] = value; \
+    }
+
+// Generate arrays for different types
+DEFINE_ARRAY(int)
+DEFINE_ARRAY(float)
+DEFINE_ARRAY(double)
+
+// Now you have:
+// int_array_t, int_array_create(), int_array_push()
+// float_array_t, float_array_create(), float_array_push()
+// double_array_t, double_array_create(), double_array_push()
+\end{lstlisting}
+
+\section{Variadic Macros}
+
+\begin{lstlisting}
+// C99 variadic macros
+#define DEBUG_PRINT(fmt, ...) \
+    fprintf(stderr, "[DEBUG] " fmt "\n", ##__VA_ARGS__)
+
+DEBUG_PRINT("Hello");              // Works with no args
+DEBUG_PRINT("Value: %d", 42);      // Works with args
+DEBUG_PRINT("x=%d, y=%d", 1, 2);   // Multiple args
+
+// The ## before __VA_ARGS__ removes comma if no args
+\end{lstlisting}
+
+\subsection{Practical Logging Macro}
+
+\begin{lstlisting}
+#ifdef DEBUG
+    #define LOG(level, fmt, ...) \
+        fprintf(stderr, "[%s] %s:%d: " fmt "\n", \
+                level, __FILE__, __LINE__, ##__VA_ARGS__)
+#else
+    #define LOG(level, fmt, ...) ((void)0)
+#endif
+
+#define LOG_ERROR(fmt, ...) LOG("ERROR", fmt, ##__VA_ARGS__)
+#define LOG_WARN(fmt, ...)  LOG("WARN", fmt, ##__VA_ARGS__)
+#define LOG_INFO(fmt, ...)  LOG("INFO", fmt, ##__VA_ARGS__)
+
+// Usage
+LOG_ERROR("Failed to open file: %s", filename);
+LOG_INFO("Server started on port %d", port);
+\end{lstlisting}
+
+\section{Compile-Time Assertions}
+
+\begin{lstlisting}
+// Old-school static assert
+#define STATIC_ASSERT(cond, msg) \
+    typedef char static_assertion_##msg[(cond) ? 1 : -1]
+
+// Use it
+STATIC_ASSERT(sizeof(int) == 4, int_must_be_4_bytes);
+STATIC_ASSERT(sizeof(void*) == 8, need_64bit_pointers);
+
+// C11 has built-in _Static_assert
+_Static_assert(sizeof(int) >= 4, "int too small");
+\end{lstlisting}
+
+\section{Macro Hygiene}
+
+\subsection{Variable Name Collisions}
+
+\begin{lstlisting}
+// BAD - can collide with user variables
+#define SWAP(a, b) do { \
+    int temp = a; \
+    a = b; \
+    b = temp; \
+} while(0)
+
+int temp = 10;  // User's variable
+int x = 5, y = 20;
+SWAP(x, y);  // Collision with temp!
+
+// BETTER - use unique names
+#define SWAP(a, b) do { \
+    int _swap_tmp_ = a; \
+    a = b; \
+    b = _swap_tmp_; \
+} while(0)
+
+// BEST - use __COUNTER__ or line number
+#define SWAP(a, b) do { \
+    int _tmp_##__LINE__ = a; \
+    a = b; \
+    b = _tmp_##__LINE__; \
+} while(0)
+\end{lstlisting}
+
+\section{Conditional Compilation}
+
+\begin{lstlisting}
+// Feature flags
+#ifdef FEATURE_LOGGING
+    #define LOG(msg) printf("LOG: %s\n", msg)
+#else
+    #define LOG(msg) ((void)0)
+#endif
+
+// Platform-specific code
+#if defined(_WIN32)
+    #define PATH_SEPARATOR '\\'
+#else
+    #define PATH_SEPARATOR '/'
+#endif
+
+// Version checks
+#if __STDC_VERSION__ >= 201112L
+    // Use C11 features
+    #define HAS_STATIC_ASSERT 1
+#else
+    // Fallback for older C
+    #define HAS_STATIC_ASSERT 0
+#endif
+\end{lstlisting}
+
+\section{Common Pitfalls}
+
+\subsection{Semicolon Swallowing}
+
+\begin{lstlisting}
+// WRONG
+#define CHECK(x) if (!(x)) return -1;
+
+// Breaks:
+if (condition)
+    CHECK(something);
+else  // Syntax error!
+    do_other();
+
+// RIGHT
+#define CHECK(x) do { \
+    if (!(x)) return -1; \
+} while(0)
+\end{lstlisting}
+
+\subsection{Operator Precedence}
+
+\begin{lstlisting}
+// WRONG
+#define DOUBLE(x) x * 2
+
+int y = DOUBLE(3 + 4);  // 3 + 4 * 2 = 11, not 14!
+
+// RIGHT
+#define DOUBLE(x) ((x) * 2)
+
+int y = DOUBLE(3 + 4);  // (3 + 4) * 2 = 14
+\end{lstlisting}
+
+\section{Useful Predefined Macros}
+
+\begin{lstlisting}
+// Standard predefined macros
+__FILE__     // Current filename
+__LINE__     // Current line number
+__func__     // Current function name (C99)
+__DATE__     // Compilation date
+__TIME__     // Compilation time
+
+// Example usage
+#define LOG_LOCATION() \
+    printf("At %s:%d in %s()\n", __FILE__, __LINE__, __func__)
+
+void my_function(void) {
+    LOG_LOCATION();  // Prints file, line, and function name
+}
+
+// Build info
+#define VERSION_INFO() \
+    printf("Built on %s at %s\n", __DATE__, __TIME__)
+\end{lstlisting}
+
+\section{Macro Best Practices}
+
+\begin{enumerate}
+    \item \textbf{Use UPPERCASE}: Makes macros obvious
+    \item \textbf{Parenthesize everything}: Parameters and entire expression
+    \item \textbf{Use do-while(0)}: For multi-statement macros
+    \item \textbf{Avoid side effects}: Document if unavoidable
+    \item \textbf{Consider inline functions}: Often better than macros
+    \item \textbf{Test thoroughly}: Expand and inspect the output
+\end{enumerate}
+
+\section{When to Use Functions Instead}
+
+\begin{lstlisting}
+// Macro - no type safety
+#define ADD(a, b) ((a) + (b))
+
+// Better - inline function with type safety
+static inline int add(int a, int b) {
+    return a + b;
+}
+
+// Macros are better for:
+// - Generic operations (works with any type)
+// - Compile-time code generation
+// - Conditional compilation
+// - Access to __FILE__, __LINE__, etc.
+
+// Functions are better for:
+// - Type safety
+// - Debugging (can step into them)
+// - Complex logic
+// - Avoiding multiple evaluation
+\end{lstlisting}
+
+\section{Summary}
+
+Macros are powerful but dangerous:
+
+\begin{itemize}
+    \item Always use parentheses
+    \item Use do-while(0) for multiple statements
+    \item Watch out for multiple evaluation
+    \item X-Macros eliminate code duplication
+    \item Stringification and token pasting create code
+    \item Prefer inline functions when type safety matters
+\end{itemize}
+
+Master macros, and you'll understand how professional C projects work. Just be careful—with great power comes great responsibility!

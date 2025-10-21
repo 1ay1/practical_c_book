@@ -1,0 +1,2489 @@
+\chapter{Struct Patterns \& Tricks}
+
+\section{The Power of Structs: Beyond Simple Grouping}
+
+Structs in C are deceptively simple—they just group data together, right? Wrong. In the hands of a professional, structs are the foundation of object-oriented patterns, memory optimization, API design, and high-performance code. This chapter covers the patterns that textbooks skip.
+
+Think of a struct like a custom container. Just as you can organize your desk drawer with dividers for pens, papers, and clips, structs let you organize data. But professional C programmers don't just use generic containers—they design custom containers optimized for exactly what they need. That's what this chapter teaches.
+
+\section{Understanding Struct Layout: Memory Secrets}
+
+Structs aren't just fields in a row. The compiler adds invisible padding for CPU performance, and understanding this is crucial for memory-efficient code.
+
+Imagine packing a suitcase. If you have big items (shoes) and small items (socks), you don't just throw them in order. You pack big items first, then fill gaps with small items. Compilers do the same with struct members—they arrange them for CPU efficiency, adding "padding" (empty space) where needed.
+
+\begin{lstlisting}
+#include <stdio.h>
+#include <stddef.h>
+
+typedef struct {
+    char a;      // 1 byte
+    int b;       // 4 bytes
+    char c;      // 1 byte
+} Example;
+
+int main(void) {
+    printf("Size: %zu\n", sizeof(Example));
+    // Prints 12 on most systems, not 6!
+    // Why? Padding between fields for alignment
+
+    printf("Offset of a: %zu\n", offsetof(Example, a));  // 0
+    printf("Offset of b: %zu\n", offsetof(Example, b));  // 4 (not 1!)
+    printf("Offset of c: %zu\n", offsetof(Example, c));  // 8 (not 5!)
+
+    // The actual memory layout:
+    // a: 1 byte
+    // padding: 3 bytes (to align b to 4-byte boundary)
+    // b: 4 bytes
+    // c: 1 byte
+    // padding: 3 bytes (to align entire struct to 4-byte boundary)
+    // Total: 12 bytes
+
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{Why Padding Exists}
+
+CPUs are faster at reading/writing data when it's aligned to natural boundaries. An \texttt{int} (4 bytes) should start at addresses divisible by 4. A \texttt{double} (8 bytes) should start at addresses divisible by 8. Misaligned access is slower on some CPUs, and crashes on others (ARM, older architectures).
+
+The compiler adds padding to ensure each field is properly aligned. This wastes memory but gains speed—a trade-off you need to understand.
+
+\section{Struct Padding and Alignment: Optimization Gold}
+
+Reordering struct members can save significant memory without changing functionality. This matters in code that allocates thousands or millions of structs.
+
+\begin{lstlisting}
+// Inefficient layout - 40% wasted space!
+typedef struct {
+    char a;     // 1 byte
+    // 3 bytes padding (to align int)
+    int b;      // 4 bytes
+    char c;     // 1 byte
+    // 3 bytes padding (to align double)
+    double d;   // 8 bytes
+    char e;     // 1 byte
+    // 7 bytes padding (to align entire struct to 8 bytes)
+} Inefficient;  // Total: 32 bytes for 18 bytes of actual data!
+
+// Efficient layout - reorder by size
+typedef struct {
+    double d;   // 8 bytes (largest first)
+    int b;      // 4 bytes
+    char a;     // 1 byte
+    char c;     // 1 byte
+    char e;     // 1 byte
+    // 1 byte padding (to align to 8 bytes)
+} Efficient;    // Total: 16 bytes - 50% smaller!
+
+// Calculate savings
+// If you allocate 1 million instances:
+// Inefficient: 32 MB
+// Efficient: 16 MB
+// Savings: 16 MB per million instances!
+\end{lstlisting}
+
+\begin{tipbox}
+Always order struct members from largest to smallest. Put 8-byte types first (double, int64\_t, pointers on 64-bit), then 4-byte (int, float), then 2-byte (short), then 1-byte (char, bool). This minimizes padding and can save massive amounts of memory in large-scale applications. (It's like Tetris—fit the pieces efficiently!)
+\end{tipbox}
+
+\subsection{Checking Alignment Requirements}
+
+\begin{lstlisting}
+#include <stdalign.h>  // C11
+
+typedef struct {
+    int x;
+    double y;
+    char z;
+} MyStruct;
+
+// Check alignment requirements
+// These tell you the boundaries where data should start
+printf("Alignment of int: %zu\n", alignof(int));         // Usually 4
+printf("Alignment of double: %zu\n", alignof(double));   // Usually 8
+printf("Alignment of char: %zu\n", alignof(char));       // Always 1
+printf("Alignment of MyStruct: %zu\n", alignof(MyStruct)); // Usually 8
+// The struct's alignment is the largest alignment of any member
+
+// Force specific alignment (for special cases like SIMD)
+typedef struct {
+    int data[4];
+} alignas(16) SIMDVector;  // Force 16-byte alignment
+// Useful for SSE/AVX instructions that require aligned data
+\end{lstlisting}
+
+\subsection{Packing Structs: When You Need Exact Layout}
+
+Sometimes you need exact layout (network protocols, file formats). Use \texttt{\#pragma pack} but understand the performance cost.
+
+\begin{lstlisting}
+// Without packing - has padding
+typedef struct {
+    char type;      // 1 byte
+    // 3 bytes padding
+    int length;     // 4 bytes
+    char data[10];  // 10 bytes
+    // 2 bytes padding
+} NormalPacket;     // 20 bytes
+
+// With packing - no padding
+#pragma pack(push, 1)  // Pack to 1-byte boundaries
+typedef struct {
+    char type;      // 1 byte
+    int length;     // 4 bytes (NO padding before this!)
+    char data[10];  // 10 bytes
+} PackedPacket;     // 15 bytes
+#pragma pack(pop)   // Restore default packing
+
+// When to use packing:
+// - Network protocols (TCP/IP headers, etc.)
+// - File formats (must match exact binary layout)
+// - Hardware registers (embedded systems)
+//
+// When NOT to use:
+// - Normal application structs (performance penalty)
+// - Structs you'll access frequently (slower due to misalignment)
+\end{lstlisting}
+
+\begin{warningbox}
+Packed structs are slower to access because of misalignment. Use them only when you must match an external binary format. For normal code, let the compiler add padding—it knows better than you do.
+\end{warningbox}
+
+\section{Flexible Array Members: Variable-Length Structs}
+
+One of C99's best features: arrays at the end of structs without fixed size. This lets you allocate structs with variable-length data in one allocation.
+
+Think of this like buying a magazine with variable-length articles. You don't know how many pages you need until you see the content. Flexible array members let you allocate exactly the right amount of space.
+
+\begin{lstlisting}
+// Old hack (pre-C99) - WRONG, undefined behavior
+typedef struct {
+    int count;
+    char data[1];  // Fake array size, then over-allocate
+} OldArray;        // Don't do this!
+
+// Modern way (C99+) - CORRECT and standard
+typedef struct {
+    int count;
+    char data[];  // Flexible array member - size determined at allocation
+} ModernArray;
+
+// Allocate with variable size
+ModernArray* create_array(int count) {
+    // Allocate: struct header + array data
+    ModernArray* arr = malloc(sizeof(ModernArray) + count * sizeof(char));
+    if (arr) {
+        arr->count = count;
+        // arr->data is right after count in memory, with space for count chars
+    }
+    return arr;
+}
+
+// Usage
+ModernArray* arr = create_array(100);
+if (arr) {
+    arr->data[0] = 'A';
+    arr->data[99] = 'Z';
+    printf("Array has %d elements\n", arr->count);
+    free(arr);  // One free for entire structure
+}
+\end{lstlisting}
+
+\begin{notebox}
+Flexible array members must be the last member of the struct, and the struct must have at least one other member. This is a language rule—the compiler needs something before the array to establish the struct's base size.
+\end{notebox}
+
+\subsection{Real-World Example: Dynamic String}
+
+This pattern is used extensively in production code for variable-length data.
+
+\begin{lstlisting}
+typedef struct {
+    size_t length;    // Current string length
+    size_t capacity;  // Allocated capacity
+    char data[];      // Flexible array for string content
+} String;
+
+String* string_create(size_t capacity) {
+    // Allocate struct + capacity bytes for string
+    String* s = malloc(sizeof(String) + capacity);
+    if (s) {
+        s->length = 0;
+        s->capacity = capacity;
+        s->data[0] = '\0';  // Empty string
+    }
+    return s;
+}
+
+String* string_from(const char* str) {
+    size_t len = strlen(str);
+    String* s = string_create(len + 1);  // +1 for null terminator
+    if (s) {
+        strcpy(s->data, str);
+        s->length = len;
+    }
+    return s;
+}
+
+// Grow string if needed
+String* string_append(String* s, const char* str) {
+    if (!s || !str) return s;
+
+    size_t add_len = strlen(str);
+    size_t new_len = s->length + add_len;
+
+    if (new_len + 1 > s->capacity) {
+        // Need to grow - reallocate
+        size_t new_capacity = (new_len + 1) * 2;  // Double capacity
+        String* new_s = realloc(s, sizeof(String) + new_capacity);
+        if (!new_s) return s;  // Keep old string on failure
+
+        s = new_s;
+        s->capacity = new_capacity;
+    }
+
+    strcpy(s->data + s->length, str);
+    s->length = new_len;
+    return s;
+}
+
+void string_destroy(String* s) {
+    free(s);  // One free for everything!
+}
+
+// This pattern gives you:
+// 1. One allocation instead of two (struct + data)
+// 2. Better cache locality (data is right after metadata)
+// 3. Simpler memory management (one malloc, one free)
+// 4. Exact size (no wasted space)
+\end{lstlisting}
+
+\subsection{Generic Variable-Length Structure Pattern}
+
+\begin{lstlisting}
+// This pattern is used in Linux kernel, compilers, databases
+typedef struct Message {
+    uint32_t type;
+    uint32_t length;
+    uint8_t payload[];  // Variable-length payload
+} Message;
+
+// Create message with specific payload
+Message* message_create(uint32_t type, const void* data, size_t len) {
+    Message* msg = malloc(sizeof(Message) + len);
+    if (msg) {
+        msg->type = type;
+        msg->length = len;
+        if (data) {
+            memcpy(msg->payload, data, len);
+        }
+    }
+    return msg;
+}
+
+// Send over network - efficient, no extra copying
+void send_message(int socket, Message* msg) {
+    // Send entire message in one go
+    send(socket, msg, sizeof(Message) + msg->length, 0);
+}
+
+// This is how network protocols work: header + variable payload
+\end{lstlisting}
+
+\section{Struct Inheritance (C Style): Poor Man's OOP}
+
+C doesn't have inheritance, but we can simulate it. The secret: the first member of a struct has the same address as the struct itself. This is guaranteed by the C standard.
+
+Imagine Russian nesting dolls. The outer doll contains the inner doll at the exact same starting point. When you open it, you can treat it as either the outer doll or the inner doll. That's struct inheritance in C.
+
+\begin{lstlisting}
+// Base "class"
+typedef struct {
+    int id;
+    char name[50];
+} Animal;
+
+void animal_init(Animal* a, int id, const char* name) {
+    a->id = id;
+    strncpy(a->name, name, sizeof(a->name) - 1);
+    a->name[sizeof(a->name) - 1] = '\0';
+}
+
+void animal_print(Animal* a) {
+    printf("ID: %d, Name: %s\n", a->id, a->name);
+}
+
+// Derived "class" - base MUST be first member!
+typedef struct {
+    Animal base;  // MUST BE FIRST - this is the magic
+    int num_legs;
+    char breed[30];
+} Dog;
+
+void dog_init(Dog* d, int id, const char* name, int legs, const char* breed) {
+    animal_init(&d->base, id, name);  // Initialize base
+    d->num_legs = legs;
+    strncpy(d->breed, breed, sizeof(d->breed) - 1);
+}
+
+void dog_bark(Dog* d) {
+    printf("%s says: Woof! (I have %d legs)\n", d->base.name, d->num_legs);
+}
+
+// Another derived class
+typedef struct {
+    Animal base;  // MUST BE FIRST
+    int wingspan;
+    int can_fly;
+} Bird;
+
+// "Virtual" function that works with base type - polymorphism!
+void print_any_animal(Animal* a) {
+    printf("ID: %d, Name: %s\n", a->id, a->name);
+}
+
+// Usage - polymorphism in C!
+int main(void) {
+    Dog d;
+    dog_init(&d, 1, "Buddy", 4, "Golden Retriever");
+
+    Bird b;
+    b.base.id = 2;
+    strcpy(b.base.name, "Tweety");
+    b.wingspan = 30;
+    b.can_fly = 1;
+
+    // Polymorphism: both work with Animal* functions
+    print_any_animal((Animal*)&d);  // Works! Treats Dog as Animal
+    print_any_animal((Animal*)&b);  // Works! Treats Bird as Animal
+
+    // Why this works: address of Dog == address of Dog.base
+    printf("Dog address: %p\n", (void*)&d);
+    printf("Dog.base address: %p\n", (void*)&d.base);
+    // These print the SAME address!
+
+    return 0;
+}
+\end{lstlisting}
+
+\begin{notebox}
+This works because C guarantees the first member of a struct has the same address as the struct itself. This is how GTK, GObject, GStreamer, and many C libraries implement object-oriented patterns! It's not a hack—it's a fundamental C guarantee.
+\end{notebox}
+
+\subsection{Type Tags for Runtime Type Information}
+
+In real OOP, you'd use `instanceof`. In C, we use type tags—explicit type fields that tell us what we're actually holding.
+
+\begin{lstlisting}
+typedef enum {
+    ANIMAL_DOG,
+    ANIMAL_CAT,
+    ANIMAL_BIRD,
+    ANIMAL_FISH
+} AnimalType;
+
+typedef struct {
+    AnimalType type;  // Type tag - RTTI in C!
+    int id;
+    char name[50];
+} Animal;
+
+typedef struct {
+    Animal base;  // Must be first
+    int num_legs;
+    char breed[30];
+} Dog;
+
+typedef struct {
+    Animal base;
+    int lives_remaining;  // Cats have 9 lives
+} Cat;
+
+typedef struct {
+    Animal base;
+    int wingspan;
+    int can_fly;
+} Bird;
+
+// Type-safe casting functions
+Dog* animal_as_dog(Animal* a) {
+    if (a && a->type == ANIMAL_DOG) {
+        return (Dog*)a;
+    }
+    return NULL;  // Not a dog!
+}
+
+Cat* animal_as_cat(Animal* a) {
+    if (a && a->type == ANIMAL_CAT) {
+        return (Cat*)a;
+    }
+    return NULL;
+}
+
+// Safe polymorphic operation
+void feed_animal(Animal* a) {
+    if (!a) return;
+
+    switch (a->type) {
+        case ANIMAL_DOG: {
+            Dog* dog = (Dog*)a;
+            printf("Feeding dog: %s (breed: %s)\n", a->name, dog->breed);
+            break;
+        }
+        case ANIMAL_CAT: {
+            Cat* cat = (Cat*)a;
+            printf("Feeding cat: %s (%d lives left)\n",
+                   a->name, cat->lives_remaining);
+            break;
+        }
+        case ANIMAL_BIRD: {
+            Bird* bird = (Bird*)a;
+            printf("Feeding bird: %s (wingspan: %d cm)\n",
+                   a->name, bird->wingspan);
+            break;
+        }
+        default:
+            printf("Unknown animal type\n");
+    }
+}
+
+// Usage with type safety
+Animal* a = get_some_animal();
+Dog* d = animal_as_dog(a);
+if (d) {
+    // Safely use as Dog
+    printf("Dog has %d legs\n", d->num_legs);
+} else {
+    // Not a dog - handle appropriately
+    printf("Not a dog!\n");
+}
+\end{lstlisting}
+
+\section{VTable Pattern: True Polymorphism in C}
+
+This is how C++ virtual functions work under the hood, and how you achieve true polymorphism in C.
+
+Think of a VTable like a phone directory. Instead of hardcoding which function to call, you look it up in the directory. Different objects have different directories, so calling "draw" on a Circle looks up Circle's draw function, while calling "draw" on a Rectangle looks up Rectangle's draw function. Same operation name, different implementations—that's polymorphism!
+
+\begin{lstlisting}
+// Forward declarations
+typedef struct Shape Shape;
+
+// VTable: table of function pointers
+typedef struct {
+    void (*draw)(Shape* self);
+    void (*move)(Shape* self, int dx, int dy);
+    double (*area)(Shape* self);
+    void (*destroy)(Shape* self);
+} ShapeVTable;
+
+// Base "class" - VTable MUST be first!
+struct Shape {
+    ShapeVTable* vtable;  // MUST be first member
+    int x, y;             // Common fields
+    const char* name;
+};
+
+// Circle implementation
+typedef struct {
+    Shape base;  // Inheritance
+    int radius;
+} Circle;
+
+void circle_draw(Shape* self) {
+    Circle* c = (Circle*)self;
+    printf("Drawing circle '%s' at (%d,%d) with radius %d\n",
+           self->name, self->x, self->y, c->radius);
+}
+
+void circle_move(Shape* self, int dx, int dy) {
+    self->x += dx;
+    self->y += dy;
+    printf("Moved circle to (%d,%d)\n", self->x, self->y);
+}
+
+double circle_area(Shape* self) {
+    Circle* c = (Circle*)self;
+    return 3.14159 * c->radius * c->radius;
+}
+
+void circle_destroy(Shape* self) {
+    printf("Destroying circle '%s'\n", self->name);
+    free(self);
+}
+
+// VTable for circles - one shared instance
+static ShapeVTable circle_vtable = {
+    .draw = circle_draw,
+    .move = circle_move,
+    .area = circle_area,
+    .destroy = circle_destroy
+};
+
+// Constructor
+Circle* circle_create(int x, int y, int radius, const char* name) {
+    Circle* c = malloc(sizeof(Circle));
+    if (c) {
+        c->base.vtable = &circle_vtable;  // Link to VTable
+        c->base.x = x;
+        c->base.y = y;
+        c->base.name = name;
+        c->radius = radius;
+    }
+    return c;
+}
+
+// Rectangle implementation
+typedef struct {
+    Shape base;
+    int width, height;
+} Rectangle;
+
+void rectangle_draw(Shape* self) {
+    Rectangle* r = (Rectangle*)self;
+    printf("Drawing rectangle '%s' at (%d,%d) size %dx%d\n",
+           self->name, self->x, self->y, r->width, r->height);
+}
+
+void rectangle_move(Shape* self, int dx, int dy) {
+    self->x += dx;
+    self->y += dy;
+}
+
+double rectangle_area(Shape* self) {
+    Rectangle* r = (Rectangle*)self;
+    return r->width * r->height;
+}
+
+void rectangle_destroy(Shape* self) {
+    free(self);
+}
+
+static ShapeVTable rectangle_vtable = {
+    .draw = rectangle_draw,
+    .move = rectangle_move,
+    .area = rectangle_area,
+    .destroy = rectangle_destroy
+};
+
+Rectangle* rectangle_create(int x, int y, int w, int h, const char* name) {
+    Rectangle* r = malloc(sizeof(Rectangle));
+    if (r) {
+        r->base.vtable = &rectangle_vtable;
+        r->base.x = x;
+        r->base.y = y;
+        r->base.name = name;
+        r->width = w;
+        r->height = h;
+    }
+    return r;
+}
+
+// Polymorphic operations - work with any Shape!
+void shape_draw(Shape* s) {
+    if (s && s->vtable && s->vtable->draw) {
+        s->vtable->draw(s);  // Dynamic dispatch!
+    }
+}
+
+void shape_move(Shape* s, int dx, int dy) {
+    if (s && s->vtable && s->vtable->move) {
+        s->vtable->move(s, dx, dy);
+    }
+}
+
+double shape_area(Shape* s) {
+    if (s && s->vtable && s->vtable->area) {
+        return s->vtable->area(s);
+    }
+    return 0.0;
+}
+
+void shape_destroy(Shape* s) {
+    if (s && s->vtable && s->vtable->destroy) {
+        s->vtable->destroy(s);
+    }
+}
+
+// Usage - true polymorphism!
+int main(void) {
+    Shape* shapes[4];
+
+    shapes[0] = (Shape*)circle_create(10, 10, 5, "c1");
+    shapes[1] = (Shape*)rectangle_create(20, 20, 10, 15, "r1");
+    shapes[2] = (Shape*)circle_create(30, 30, 8, "c2");
+    shapes[3] = (Shape*)rectangle_create(40, 40, 20, 25, "r2");
+
+    // Same operation, different behavior for each type
+    for (int i = 0; i < 4; i++) {
+        shape_draw(shapes[i]);       // Polymorphic draw
+        shape_move(shapes[i], 5, 5); // Polymorphic move
+        printf("Area: %.2f\n", shape_area(shapes[i]));
+        printf("\n");
+    }
+
+    // Cleanup
+    for (int i = 0; i < 4; i++) {
+        shape_destroy(shapes[i]);
+    }
+
+    return 0;
+}
+
+// This is EXACTLY how C++ virtual functions work!
+// Also how GObject (GTK), COM (Windows), and many C APIs work.
+\end{lstlisting}
+
+\begin{tipbox}
+The VTable must be the first member for safe casting between base and derived types. C guarantees that a pointer to a struct points to its first member, so Shape* and Circle* point to the same memory location when Circle starts with Shape. This is the foundation of C polymorphism.
+\end{tipbox}
+
+\section{Bit Fields: Packing Booleans and Small Integers}
+
+When you have many boolean flags or small integers (0-7, 0-15, etc.), bit fields let you pack them into minimal space. This is crucial for embedded systems, network protocols, and memory-constrained code.
+
+Think of bit fields like a pillbox with compartments. Instead of using a whole jar for each pill, you have one box with tiny compartments. Each compartment holds exactly what you need—no wasted space.
+
+\begin{lstlisting}
+// Without bit fields - wastes 96% of memory!
+typedef struct {
+    int is_valid;      // 4 bytes for 1 bit of information!
+    int is_ready;      // 4 bytes for 1 bit
+    int is_error;      // 4 bytes for 1 bit
+    int priority;      // 4 bytes for value 0-7 (needs 3 bits)
+    int type;          // 4 bytes for value 0-15 (needs 4 bits)
+    int color;         // 4 bytes for value 0-7 (needs 3 bits)
+} WastefulFlags;      // Total: 24 bytes for 13 bits of data!
+
+// With bit fields - efficient
+typedef struct {
+    unsigned int is_valid : 1;   // 1 bit
+    unsigned int is_ready : 1;   // 1 bit
+    unsigned int is_error : 1;   // 1 bit
+    unsigned int priority : 3;   // 3 bits (holds 0-7)
+    unsigned int type : 4;       // 4 bits (holds 0-15)
+    unsigned int color : 3;      // 3 bits (holds 0-7)
+    unsigned int reserved : 19;  // Padding to 32 bits (good practice)
+} CompactFlags;                  // Total: 4 bytes - 83% smaller!
+
+// Usage - looks like normal struct access
+CompactFlags flags = {0};
+flags.is_valid = 1;
+flags.is_ready = 1;
+flags.is_error = 0;
+flags.priority = 5;     // Can hold 0-7
+flags.type = 12;        // Can hold 0-15
+flags.color = 3;        // Can hold 0-7
+
+// Read values
+if (flags.is_valid && flags.priority > 3) {
+    printf("High priority item: type=%u, color=%u\n",
+           flags.type, flags.color);
+}
+
+// For embedded systems or arrays, this saves massive memory
+CompactFlags array[1000];  // 4KB instead of 24KB!
+\end{lstlisting}
+
+\subsection{Bit Field Gotchas and Warnings}
+
+\begin{lstlisting}
+typedef struct {
+    unsigned int value : 4;  // Can hold 0-15
+} BitField;
+
+BitField bf = {0};
+bf.value = 15;
+bf.value++;  // Wraps to 0! Overflow in 4 bits
+
+// Can't take address of bit field
+// unsigned int* p = &bf.value;  // ERROR! Won't compile
+
+// Bit fields have implementation-defined layout
+// Order in memory varies by compiler/platform
+// Size and padding vary by compiler
+
+// Portable solution: manual bit manipulation
+typedef struct {
+    uint32_t flags;  // Store all flags in one integer
+} PortableFlags;
+
+#define FLAG_VALID   0x01  // Bit 0
+#define FLAG_READY   0x02  // Bit 1
+#define FLAG_ERROR   0x04  // Bit 2
+#define PRIORITY_SHIFT 3   // Bits 3-5
+#define PRIORITY_MASK  0x07
+#define TYPE_SHIFT     6   // Bits 6-9
+#define TYPE_MASK      0x0F
+
+// Set/get macros
+#define SET_PRIORITY(f, p) \
+    ((f) = ((f) & ~(PRIORITY_MASK << PRIORITY_SHIFT)) | \
+           (((p) & PRIORITY_MASK) << PRIORITY_SHIFT))
+
+#define GET_PRIORITY(f) \
+    (((f) >> PRIORITY_SHIFT) & PRIORITY_MASK)
+
+// More verbose but portable and predictable
+\end{lstlisting}
+
+\begin{warningbox}
+Bit fields are NOT portable across compilers/architectures! Bit order, packing, and alignment vary. Use bit fields for memory savings within your program, never for file formats or network protocols. For external data, use explicit bit manipulation with masks and shifts.
+\end{warningbox}
+
+\section{Designated Initializers: Self-Documenting Code}
+
+C99's designated initializers make struct initialization clear, flexible, and resistant to bugs from field reordering.
+
+\begin{lstlisting}
+typedef struct {
+    int x;
+    int y;
+    int z;
+    const char* name;
+    double value;
+    int flags;
+} Config;
+
+// Old way (C89) - fragile
+Config c1 = {10, 20, 30, "test", 3.14, 0};
+// Problems:
+// 1. Must remember exact order
+// 2. Easy to mix up similar types (int/int/int)
+// 3. If struct changes order, this breaks silently
+// 4. Unreadable - what do these numbers mean?
+
+// New way (C99+) - robust and clear
+Config c2 = {
+    .x = 10,
+    .y = 20,
+    .z = 30,
+    .name = "test",
+    .value = 3.14,
+    .flags = 0
+};
+// Benefits:
+// 1. Self-documenting - clear what each value means
+// 2. Order doesn't matter
+// 3. Resistant to struct changes
+// 4. Readable by anyone
+
+// Can skip fields - they become 0/NULL
+Config c3 = {
+    .x = 5,
+    .name = "partial"
+    // y, z, value, flags are all zero
+};
+
+// Order doesn't matter!
+Config c4 = {
+    .name = "flexible",  // name first
+    .z = 100,            // skip x and y
+    .x = 50              // x last
+    // y, value, flags are zero
+};
+
+// Arrays of structs with sparse initialization
+Config configs[] = {
+    [0] = {.name = "first", .x = 1},
+    [5] = {.name = "sixth", .x = 6},  // Indices 1-4 are zero-initialized
+    [10] = {.name = "eleventh", .x = 11}
+};
+\end{lstlisting}
+
+\begin{tipbox}
+Always use designated initializers for structs with more than 3 fields. Your code becomes self-documenting and immune to field reordering. This is standard practice in the Linux kernel, BSD, and professional C codebases. (And it makes code review much easier—reviewers can see what each value means without looking up the struct definition.)
+\end{tipbox}
+
+\subsection{Compound Literals: Temporary Structs}
+
+\begin{lstlisting}
+typedef struct {
+    int x, y;
+} Point;
+
+void draw_line(Point start, Point end) {
+    printf("Line from (%d,%d) to (%d,%d)\n",
+           start.x, start.y, end.x, end.y);
+}
+
+// Without compound literals - verbose
+Point p1 = {10, 20};
+Point p2 = {30, 40};
+draw_line(p1, p2);
+
+// With compound literals - concise
+draw_line((Point){10, 20}, (Point){30, 40});
+
+// Great for initializing in expressions
+Point* points = malloc(sizeof(Point) * 3);
+points[0] = (Point){.x = 0, .y = 0};
+points[1] = (Point){.x = 100, .y = 0};
+points[2] = (Point){.x = 50, .y = 100};
+
+// Reset struct to zero
+Config cfg = {/* initialized */};
+// Later:
+cfg = (Config){0};  // Reset to all zeros!
+\end{lstlisting}
+
+\section{Anonymous Structs and Unions: Cleaner Access}
+
+C11 allows anonymous structs and unions for more natural member access.
+
+\begin{lstlisting}
+// Without anonymous union - verbose
+typedef struct {
+    enum { INT, FLOAT, STRING } type;
+    union {
+        int int_val;
+        float float_val;
+        char* string_val;
+    } data;  // Named union
+} Value_Old;
+
+Value_Old v1;
+v1.type = INT;
+v1.data.int_val = 42;  // Must go through 'data'
+
+// With anonymous union (C11) - cleaner
+typedef struct {
+    enum { INT, FLOAT, STRING } type;
+    union {
+        int int_val;
+        float float_val;
+        char* string_val;
+    };  // No name!
+} Value;
+
+Value v2;
+v2.type = INT;
+v2.int_val = 42;  // Direct access - cleaner!
+
+// Anonymous struct example
+typedef struct {
+    int type;
+    struct {  // Anonymous struct
+        int x;
+        int y;
+        int z;
+    };  // No name
+} Entity;
+
+Entity e;
+e.x = 10;  // Direct access, not e.position.x
+e.y = 20;
+e.z = 30;
+\end{lstlisting}
+
+\subsection{Tagged Unions: Type-Safe Variants}
+
+The pattern for variant types that hold different types of data.
+
+\begin{lstlisting}
+typedef enum {
+    VAR_NONE,
+    VAR_INT,
+    VAR_DOUBLE,
+    VAR_STRING,
+    VAR_ARRAY
+} VariantType;
+
+typedef struct Variant Variant;
+
+struct Variant {
+    VariantType type;
+    union {
+        int as_int;
+        double as_double;
+        char* as_string;
+        struct {
+            Variant* items;
+            size_t count;
+        } as_array;
+    };
+};
+
+// Constructors
+Variant make_int(int value) {
+    Variant v;
+    v.type = VAR_INT;
+    v.as_int = value;
+    return v;
+}
+
+Variant make_double(double value) {
+    Variant v;
+    v.type = VAR_DOUBLE;
+    v.as_double = value;
+    return v;
+}
+
+Variant make_string(const char* str) {
+    Variant v;
+    v.type = VAR_STRING;
+    v.as_string = strdup(str);
+    return v;
+}
+
+Variant make_array(size_t capacity) {
+    Variant v;
+    v.type = VAR_ARRAY;
+    v.as_array.items = malloc(sizeof(Variant) * capacity);
+    v.as_array.count = 0;
+    return v;
+}
+
+// Type-safe access
+int variant_as_int(Variant* v, int* out) {
+    if (v && v->type == VAR_INT) {
+        *out = v->as_int;
+        return 0;
+    }
+    return -1;  // Wrong type
+}
+
+// Print any variant
+void print_variant(Variant* v) {
+    if (!v) return;
+
+    switch (v->type) {
+        case VAR_NONE:
+            printf("(none)");
+            break;
+        case VAR_INT:
+            printf("%d", v->as_int);
+            break;
+        case VAR_DOUBLE:
+            printf("%f", v->as_double);
+            break;
+        case VAR_STRING:
+            printf("\"%s\"", v->as_string);
+            break;
+        case VAR_ARRAY:
+            printf("[array of %zu items]", v->as_array.count);
+            break;
+    }
+}
+
+// Cleanup
+void variant_destroy(Variant* v) {
+    if (!v) return;
+
+    if (v->type == VAR_STRING) {
+        free(v->as_string);
+    } else if (v->type == VAR_ARRAY) {
+        for (size_t i = 0; i < v->as_array.count; i++) {
+            variant_destroy(&v->as_array.items[i]);
+        }
+        free(v->as_array.items);
+    }
+}
+
+// This pattern is used in scripting language implementations,
+// JSON libraries, configuration systems, etc.
+\end{lstlisting}
+
+\section{Struct Copy: Shallow vs Deep}
+
+Assignment operator copies structs, but watch out for pointers!
+
+\begin{lstlisting}
+typedef struct {
+    int id;
+    char* name;   // Pointer!
+    int* data;    // Pointer!
+    size_t size;
+} Resource;
+
+// Shallow copy - DANGEROUS!
+Resource r1 = {
+    .id = 1,
+    .name = strdup("test"),
+    .data = malloc(sizeof(int) * 10),
+    .size = 10
+};
+
+Resource r2 = r1;  // Shallow copy - copies pointer values only!
+// Now both r1 and r2 point to the SAME memory!
+
+free(r1.name);     // r2.name is now dangling!
+r2.name[0] = 'X';  // CRASH! Use-after-free
+
+// Deep copy - SAFE
+Resource resource_copy(const Resource* src) {
+    Resource dst = {0};
+
+    dst.id = src->id;
+    dst.size = src->size;
+
+    // Deep copy: allocate new memory and copy content
+    dst.name = strdup(src->name);
+
+    dst.data = malloc(sizeof(int) * src->size);
+    if (dst.data) {
+        memcpy(dst.data, src->data, sizeof(int) * src->size);
+    }
+
+    return dst;
+}
+
+// Usage
+Resource r3 = resource_copy(&r1);
+// r3 has its own separate copies of name and data
+free(r1.name);     // Safe - r3.name is different pointer
+free(r1.data);
+
+// r3 still valid
+printf("r3 name: %s\n", r3.name);
+
+// Clean up r3
+free(r3.name);
+free(r3.data);
+\end{lstlisting}
+
+\begin{warningbox}
+Assignment (\texttt{=}) only does shallow copy! If your struct contains pointers, you MUST write a custom copy function. This is a major source of bugs—two structs sharing the same pointer, leading to double-frees or use-after-free errors. (It's like copying a house address vs copying the actual house—one's just a reference, the other is a full duplicate.)
+\end{warningbox}
+
+\section{Struct Comparison: Why memcmp is Dangerous}
+
+\begin{lstlisting}
+typedef struct {
+    int x;
+    int y;
+} Point;
+
+Point p1 = {1, 2};
+Point p2 = {1, 2};
+
+// WRONG - unreliable due to padding!
+if (memcmp(&p1, &p2, sizeof(Point)) == 0) {
+    // May fail even though x and y are equal!
+    // Padding bytes contain garbage and differ
+}
+
+// The actual memory:
+// p1: [x=1][garbage padding][y=2]
+// p2: [x=1][different garbage][y=2]
+// memcmp sees different padding bytes!
+
+// CORRECT - compare field by field
+int point_equal(const Point* a, const Point* b) {
+    if (!a || !b) return 0;
+    return a->x == b->x && a->y == b->y;
+}
+
+// Or for many fields
+typedef struct {
+    int id;
+    char name[50];
+    double value;
+} Record;
+
+int record_equal(const Record* a, const Record* b) {
+    if (!a || !b) return 0;
+    return a->id == b->id &&
+           strcmp(a->name, b->name) == 0 &&
+           a->value == b->value;
+}
+
+// Comparison function for qsort
+int point_compare(const void* a, const void* b) {
+    const Point* pa = (const Point*)a;
+    const Point* pb = (const Point*)b;
+
+    // Sort by x, then by y
+    if (pa->x != pb->x)
+        return (pa->x > pb->x) - (pa->x < pb->x);  // Avoid overflow
+    return (pa->y > pb->y) - (pa->y < pb->y);
+}
+
+// Usage with qsort
+Point points[100];
+// ... initialize ...
+qsort(points, 100, sizeof(Point), point_compare);
+\end{lstlisting}
+
+\section{Struct Serialization: Never Write Structs Directly}
+
+\begin{lstlisting}
+typedef struct {
+    uint32_t magic;     // File format identifier
+    uint16_t version;   // Version number
+    uint16_t flags;
+    uint32_t count;
+} FileHeader;
+
+// WRONG - not portable!
+void write_header_wrong(FILE* f, const FileHeader* h) {
+    fwrite(h, sizeof(FileHeader), 1, f);
+    // Problems:
+    // 1. Padding bytes written (garbage)
+    // 2. Byte order (endianness) not specified
+    // 3. Struct layout varies by compiler
+    // 4. Won't work on different architectures
+}
+
+// CORRECT - write field by field in specific byte order
+int write_header(FILE* f, const FileHeader* h) {
+    // Convert to network byte order (big-endian)
+    uint32_t magic = htonl(h->magic);
+    uint16_t version = htons(h->version);
+    uint16_t flags = htons(h->flags);
+    uint32_t count = htonl(h->count);
+
+    // Write each field explicitly
+    if (fwrite(&magic, sizeof(magic), 1, f) != 1) return -1;
+    if (fwrite(&version, sizeof(version), 1, f) != 1) return -1;
+    if (fwrite(&flags, sizeof(flags), 1, f) != 1) return -1;
+    if (fwrite(&count, sizeof(count), 1, f) != 1) return -1;
+
+    return 0;
+}
+
+// Read with same byte order
+int read_header(FILE* f, FileHeader* h) {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t flags;
+    uint32_t count;
+
+    if (fread(&magic, sizeof(magic), 1, f) != 1) return -1;
+    if (fread(&version, sizeof(version), 1, f) != 1) return -1;
+    if (fread(&flags, sizeof(flags), 1, f) != 1) return -1;
+    if (fread(&count, sizeof(count), 1, f) != 1) return -1;
+
+    // Convert from network byte order
+    h->magic = ntohl(magic);
+    h->version = ntohs(version);
+    h->flags = ntohs(flags);
+    h->count = ntohl(count);
+
+    return 0;
+}
+
+// This ensures portability across architectures and compilers
+\end{lstlisting}
+
+\section{Zero-Initialization Idioms}
+
+\begin{lstlisting}
+typedef struct {
+    int x;
+    char* name;
+    double values[10];
+    int flags;
+} Data;
+
+// Method 1: Initialize all members to zero
+Data d1 = {0};  // Most common and portable
+
+// Method 2: Empty braces (C++ style, works in C too)
+Data d2 = {};
+
+// Method 3: memset
+Data d3;
+memset(&d3, 0, sizeof(Data));
+
+// Method 4: Compound literal (C99+)
+Data d4;
+// ... use d4 ...
+d4 = (Data){0};  // Reset to zero
+
+// Why zero-initialization matters:
+// 1. Prevents uninitialized memory bugs
+// 2. Sets pointers to NULL (safe)
+// 3. Sets integers to 0
+// 4. Sets floats to 0.0
+// 5. Makes valgrind happy
+
+// Common idiom in Linux kernel and BSD
+typedef struct {
+    int initialized;  // Flag
+    // ... other members ...
+} Module;
+
+Module mod = {0};  // Everything zero, including initialized flag
+// Later:
+if (!mod.initialized) {
+    initialize_module(&mod);
+    mod.initialized = 1;
+}
+\end{lstlisting}
+
+\section{Struct Hashing for Hash Tables}
+
+\begin{lstlisting}
+typedef struct {
+    int id;
+    char name[50];
+    char email[100];
+} Person;
+
+// Simple hash function for structs
+// This uses djb2 hash algorithm
+uint32_t person_hash(const Person* p) {
+    if (!p) return 0;
+
+    uint32_t hash = 5381;  // Magic constant from djb2
+
+    // Hash integer fields
+    hash = ((hash << 5) + hash) + p->id;  // hash * 33 + id
+
+    // Hash string fields byte by byte
+    for (const char* s = p->name; *s; s++) {
+        hash = ((hash << 5) + hash) + (unsigned char)*s;
+    }
+
+    for (const char* s = p->email; *s; s++) {
+        hash = ((hash << 5) + hash) + (unsigned char)*s;
+    }
+
+    return hash;
+}
+
+// Use in hash table
+Person person = {123, "Alice", "alice@example.com"};
+uint32_t hash = person_hash(&person);
+size_t index = hash % table_size;
+
+// For more complex structs, use a better hash
+uint32_t fnv1a_hash(const void* data, size_t len) {
+    const uint8_t* bytes = (const uint8_t*)data;
+    uint32_t hash = 2166136261u;  // FNV offset basis
+
+    for (size_t i = 0; i < len; i++) {
+        hash ^= bytes[i];
+        hash *= 16777619u;  // FNV prime
+    }
+
+    return hash;
+}
+
+// Hash the person struct
+uint32_t hash = fnv1a_hash(&person, sizeof(person));
+\end{lstlisting}
+
+\section{Intrusive Data Structures}
+
+Instead of wrapping data in list nodes, embed list nodes in data. This is how the Linux kernel does it.
+
+\begin{lstlisting}
+// Traditional approach - extra allocation
+typedef struct ListNode {
+    void* data;               // Pointer to actual data
+    struct ListNode* next;
+} ListNode;
+
+// Problems:
+// 1. Extra malloc for each node
+// 2. Extra pointer indirection
+// 3. Cache-unfriendly
+
+// Intrusive approach - embed link in struct
+typedef struct Task Task;
+struct Task {
+    int pid;
+    char name[64];
+    int priority;
+    Task* next;  // Intrusive link
+};
+
+// No extra allocation needed
+Task* head = NULL;
+
+Task* create_task(int pid, const char* name, int priority) {
+    Task* t = malloc(sizeof(Task));
+    if (t) {
+        t->pid = pid;
+        strncpy(t->name, name, sizeof(t->name) - 1);
+        t->priority = priority;
+        t->next = NULL;
+    }
+    return t;
+}
+
+// Add to list
+void add_task(Task** head, Task* task) {
+    task->next = *head;
+    *head = task;
+}
+
+// Iterate
+for (Task* t = head; t; t = t->next) {
+    printf("Task %d: %s (priority %d)\n", t->pid, t->name, t->priority);
+}
+
+// Benefits:
+// 1. One allocation instead of two
+// 2. Better cache locality
+// 3. No pointer chasing
+// 4. This is how Linux kernel lists work!
+\end{lstlisting}
+
+\section{Real-World Data Structures: What Production Code Actually Uses}
+
+Every data structure in C is built from structs. But textbooks teach linked lists and binary trees in isolation, never showing you how professionals actually implement them in production code. This section covers the data structures you'll see in real codebases—with all the practical details textbooks skip.
+
+\subsection{Dynamic Arrays (Vectors): The Most Common Data Structure}
+
+Let's start with the single most important data structure in C: the dynamic array, also called a vector or resizable array.
+
+\textbf{What is a dynamic array?} Think of it like a grocery list. A regular C array is like writing your list on a sticky note—you have limited space, and once it's full, you can't add more items. A dynamic array is like having a magic notebook: when you run out of space, it automatically gives you a bigger page and copies everything over.
+
+In C++, this is \texttt{std::vector}. In Python, it's just called a list. In Java, it's \texttt{ArrayList}. Every modern language has one because they're incredibly useful. But in C, you have to build it yourself—and understanding how it works internally makes you a better programmer in \textit{any} language.
+
+\textbf{Why are dynamic arrays everywhere?} Three reasons:
+\begin{enumerate}
+    \item \textbf{Fast access}: Getting item \#5 is instant (O(1)), unlike linked lists where you have to walk through items 1, 2, 3, 4 first
+    \item \textbf{Cache-friendly}: All data sits next to each other in memory, making the CPU happy
+    \item \textbf{Simple}: Adding to the end is usually fast, and the implementation is straightforward
+\end{enumerate}
+
+Redis uses dynamic arrays for command arguments. Git uses them for file lists. SQLite uses them to store query results. They're the default choice for "I need to store a bunch of things" in professional C code.
+
+\begin{lstlisting}
+// Generic dynamic array (vector)
+// This pattern is used by:
+// - Redis for command arguments
+// - Git for file lists
+// - SQLite for result rows
+
+typedef struct {
+    void** data;        // Array of pointers to actual items
+    size_t size;        // How many items we currently have
+    size_t capacity;    // How much space we've allocated
+} Vector;
+
+// Let's understand each field:
+//
+// 'data': This is our actual array. It's void** (pointer to pointer)
+//         because we want to store ANY type. Each element is a pointer
+//         to some data. Think of it as an array of "boxes" where each
+//         box can hold a pointer to anything.
+//
+// 'size': The number of items currently in the vector. If you add
+//         3 items, size is 3. This is what users care about.
+//
+// 'capacity': How much space we've allocated. We might allocate space
+//             for 10 items but only use 3. This lets us add more items
+//             without reallocating every time. It's like buying a
+//             filing cabinet with 10 slots even though you only have
+//             3 folders—you have room to grow.
+
+// Create empty vector
+Vector* vector_create(void) {
+    Vector* v = malloc(sizeof(Vector));
+    if (!v) return NULL;
+
+    v->data = NULL;
+    v->size = 0;
+    v->capacity = 0;
+    return v;
+}
+
+// Add element (with automatic growth)
+// This is the heart of the dynamic array—this is what makes it "dynamic"
+int vector_push(Vector* v, void* item) {
+    // Step 1: Check if we have room
+    // If size equals capacity, we're full. Time to grow!
+    if (v->size >= v->capacity) {
+        // Growth strategy: DOUBLE the capacity each time
+        // If capacity is 0 (new vector), start with 8
+        // Otherwise, double it: 8 → 16 → 32 → 64 → 128...
+        //
+        // Why double? It's the magic of "amortized O(1)":
+        // - If we grew by +1 each time: 1, 2, 3, 4... we'd reallocate
+        //   on EVERY insertion. Terrible!
+        // - If we double: 1, 2, 4, 8, 16... we reallocate rarely
+        // - Total copies for n items: 1 + 2 + 4 + 8... ≈ 2n
+        // - Average per item: 2n/n = 2 = O(1)
+        size_t new_capacity = v->capacity ? v->capacity * 2 : 8;
+
+        // Step 2: Allocate bigger array
+        // realloc is smart: it tries to grow in-place if possible,
+        // otherwise it allocates new memory and copies for us
+        void** new_data = realloc(v->data,
+                                  new_capacity * sizeof(void*));
+        if (!new_data) return -1;  // Out of memory—very rare
+
+        // Step 3: Update our struct
+        v->data = new_data;
+        v->capacity = new_capacity;
+        // Note: size stays the same—we didn't add items yet,
+        // just made room for future items
+    }
+
+    // Step 4: Actually add the item
+    // v->size++ is a post-increment: use current size as index,
+    // then increment. So if size was 3, we write to index 3,
+    // then size becomes 4.
+    v->data[v->size++] = item;
+    return 0;
+}
+
+// Get element (with bounds checking)
+void* vector_get(Vector* v, size_t index) {
+    if (index >= v->size) return NULL;
+    return v->data[index];
+}
+
+// Remove last element
+void* vector_pop(Vector* v) {
+    if (v->size == 0) return NULL;
+    return v->data[--v->size];
+}
+
+// Cleanup
+void vector_destroy(Vector* v) {
+    free(v->data);
+    free(v);
+}
+
+// Usage example
+Vector* files = vector_create();
+vector_push(files, "main.c");    // size=1, capacity=8
+vector_push(files, "utils.c");   // size=2, capacity=8
+vector_push(files, "parser.c");  // size=3, capacity=8
+
+// Iterate through all items
+for (size_t i = 0; i < files->size; i++) {
+    printf("%s\n", (char*)vector_get(files, i));
+}
+
+// What happened behind the scenes:
+// 1. vector_create() allocated the struct but data is NULL
+// 2. First push: capacity was 0, so we allocated space for 8 items
+// 3. Second push: capacity is 8, size is 1, plenty of room—just add
+// 4. Third push: capacity is 8, size is 2, still room—just add
+// 5. If we kept pushing to the 9th item, we'd reallocate to capacity 16
+\end{lstlisting}
+
+\begin{tipbox}
+\textbf{Why doubling works:} This is one of the most elegant algorithms in computer science. When capacity doubles each time (1 → 2 → 4 → 8 → 16...), the \textit{amortized} cost of insertion is O(1).
+
+Here's why: To insert n items, we copy at most 1 + 2 + 4 + 8 + ... + n items total. That sum equals approximately 2n. So 2n copies for n insertions = 2 copies per insertion on average. That's constant time!
+
+Growing by a fixed amount (+10 each time) would be: 10 + 20 + 30 + 40 + ... + n = O(n²) total copies. Terrible!
+
+This is why \textit{every} professional implementation doubles: Redis, Linux kernel, Git, Python, Java, C++. It's not arbitrary—it's mathematically optimal.
+\end{tipbox}
+
+\subsection{Type-Safe Vectors with Macros}
+
+The generic vector above stores \texttt{void*} (pointers to anything), which means you lose type safety. You could accidentally store an \texttt{int} where you meant to store a string, and the compiler won't warn you. You have to remember to cast everything back to the right type.
+
+\textbf{The problem:} \texttt{void*} is like a bag that can hold anything. That's flexible but dangerous. You can put a shoe in a bag labeled "books" and the bag doesn't care—but you'll be confused later when you pull out a shoe instead of a book.
+
+\textbf{The solution:} Generate specialized versions for each type you need. Instead of one generic vector that stores \texttt{void*}, we create \texttt{int\_vector} that stores \texttt{int}, \texttt{string\_vector} that stores \texttt{char*}, etc. Now the compiler knows what type each vector holds and can catch mistakes.
+
+How do we avoid writing the same code 20 times? Macros! We write the code once as a macro, then "stamp out" copies for different types. It's like a cookie cutter—one template, many cookies.
+
+\begin{lstlisting}
+// Macro to define a type-safe vector
+#define DEFINE_VECTOR(T) \
+    typedef struct { \
+        T* data; \
+        size_t size; \
+        size_t capacity; \
+    } T##_vector; \
+    \
+    T##_vector* T##_vector_create(void) { \
+        T##_vector* v = malloc(sizeof(T##_vector)); \
+        if (v) { \
+            v->data = NULL; \
+            v->size = 0; \
+            v->capacity = 0; \
+        } \
+        return v; \
+    } \
+    \
+    int T##_vector_push(T##_vector* v, T item) { \
+        if (v->size >= v->capacity) { \
+            size_t new_cap = v->capacity ? v->capacity * 2 : 8; \
+            T* new_data = realloc(v->data, new_cap * sizeof(T)); \
+            if (!new_data) return -1; \
+            v->data = new_data; \
+            v->capacity = new_cap; \
+        } \
+        v->data[v->size++] = item; \
+        return 0; \
+    } \
+    \
+    T T##_vector_get(T##_vector* v, size_t i) { \
+        return v->data[i]; \
+    } \
+    \
+    void T##_vector_destroy(T##_vector* v) { \
+        free(v->data); \
+        free(v); \
+    }
+
+// Generate int vector
+// This one line expands to ~30 lines of code!
+// The preprocessor copies the DEFINE_VECTOR template,
+// replacing every "T" with "int"
+DEFINE_VECTOR(int)
+
+// Now we have int_vector, int_vector_create, int_vector_push, etc.
+
+// Usage: type-safe!
+int_vector* numbers = int_vector_create();
+int_vector_push(numbers, 42);     // Compiler knows this is int
+int_vector_push(numbers, 100);
+int value = int_vector_get(numbers, 0);  // Returns int, no casting!
+
+// If you try: int_vector_push(numbers, "hello");
+// Compiler error! Can't pass char* where int is expected.
+// With void*, this would silently compile and crash at runtime.
+
+// Generate more types as needed:
+// DEFINE_VECTOR(float)   → float_vector
+// DEFINE_VECTOR(char*)   → char_ptr_vector (yes, that works!)
+// DEFINE_VECTOR(MyStruct) → MyStruct_vector
+\end{lstlisting}
+
+\subsection{Hash Tables: Fast Lookups Everywhere}
+
+After dynamic arrays, hash tables are the second most important data structure. If you've used Python dictionaries, JavaScript objects, or Java HashMaps, you've used hash tables.
+
+\textbf{What's the problem they solve?} Imagine you have a phone book with 1 million names. You want to find "John Smith." With an array, you'd have to check every entry until you find him—potentially 1 million checks! With a hash table, you can find him in typically just 1-2 checks. That's the magic.
+
+\textbf{How do they work?} Think of a hash table like a filing cabinet with 128 drawers (we'll use 128 for this example). When you want to store "John Smith," you:
+\begin{enumerate}
+    \item Run his name through a \textit{hash function}—a math formula that converts "John Smith" into a number, say 47
+    \item Put his data in drawer \#47
+    \item Later, when looking up "John Smith," hash it again (gets 47), check drawer \#47—found!
+\end{enumerate}
+
+\textbf{What if two names hash to the same drawer?} This is called a \textit{collision}. Each drawer is actually a linked list, so drawer \#47 might contain chains of people: "John Smith" → "Jane Doe" → "Bob Jones" (if they all hashed to 47). You walk through the chain comparing names. Still way faster than searching 1 million entries!
+
+Every language runtime, database, and compiler uses hash tables. Python dicts, Redis hashes, browser DOM lookups, Git object storage—all hash tables underneath.
+
+\begin{lstlisting}
+// Hash table with chaining (separate chaining)
+// This is how Python dicts, Redis hashes, and most hash
+// tables are implemented
+
+#define TABLE_SIZE 128  // Power of 2 for fast modulo
+
+typedef struct HashNode {
+    char* key;
+    void* value;
+    struct HashNode* next;  // For collision handling
+} HashNode;
+
+typedef struct {
+    HashNode* buckets[TABLE_SIZE];
+    size_t count;
+} HashTable;
+
+// Simple hash function (djb2)
+// Used by: Perl, Berkeley DB, many others
+unsigned long hash_string(const char* str) {
+    unsigned long hash = 5381;  // Magic starting value
+    int c;
+
+    // Process each character in the string
+    while ((c = *str++)) {
+        // The hash formula: hash = hash * 33 + character
+        // << 5 means "multiply by 32" (shift left 5 bits)
+        // So (hash << 5) + hash = hash * 32 + hash = hash * 33
+        hash = ((hash << 5) + hash) + c;
+    }
+
+    return hash;
+
+    // Why this formula? Dan Bernstein (djb) discovered that
+    // multiplying by 33 and adding characters gives excellent
+    // distribution—different strings rarely hash to same number.
+    // Why 33 specifically? It's prime, close to a power of 2,
+    // and experimentally works well. Sometimes algorithms are
+    // more art than science!
+}
+
+// Create hash table
+HashTable* hashtable_create(void) {
+    HashTable* table = malloc(sizeof(HashTable));
+    if (!table) return NULL;
+
+    // Initialize all buckets to NULL
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        table->buckets[i] = NULL;
+    }
+    table->count = 0;
+
+    return table;
+}
+
+// Insert or update
+void hashtable_set(HashTable* table, const char* key, void* value) {
+    // Step 1: Hash the key to get a big number
+    unsigned long hash = hash_string(key);
+
+    // Step 2: Convert to bucket index (0 to TABLE_SIZE-1)
+    // % is modulo: 9847 % 128 = 71, so use bucket 71
+    int bucket = hash % TABLE_SIZE;
+
+    // Step 3: Check if this key already exists in this bucket
+    // Walk through the linked list in this bucket
+    HashNode* node = table->buckets[bucket];
+    while (node) {
+        if (strcmp(node->key, key) == 0) {
+            // Found it! Update the value and we're done
+            // This is like updating an existing phone book entry
+            node->value = value;
+            return;
+        }
+        node = node->next;  // Keep looking in chain
+    }
+
+    // Step 4: Key doesn't exist, create new entry
+    // Insert at HEAD of chain (faster than tail)
+    HashNode* new_node = malloc(sizeof(HashNode));
+    new_node->key = strdup(key);  // strdup copies the string
+    new_node->value = value;
+    new_node->next = table->buckets[bucket];  // Point to old head
+    table->buckets[bucket] = new_node;        // Make this new head
+    table->count++;
+
+    // Why insert at head? O(1) instead of O(n) for tail.
+    // We'd have to walk entire chain to find the tail.
+    // Order doesn't matter in a hash table anyway.
+}
+
+// Lookup
+void* hashtable_get(HashTable* table, const char* key) {
+    unsigned long hash = hash_string(key);
+    int bucket = hash % TABLE_SIZE;
+
+    HashNode* node = table->buckets[bucket];
+    while (node) {
+        if (strcmp(node->key, key) == 0) {
+            return node->value;
+        }
+        node = node->next;
+    }
+
+    return NULL;  // Not found
+}
+
+// Delete
+int hashtable_delete(HashTable* table, const char* key) {
+    unsigned long hash = hash_string(key);
+    int bucket = hash % TABLE_SIZE;
+
+    HashNode** node_ptr = &table->buckets[bucket];
+
+    while (*node_ptr) {
+        HashNode* node = *node_ptr;
+        if (strcmp(node->key, key) == 0) {
+            *node_ptr = node->next;  // Remove from chain
+            free(node->key);
+            free(node);
+            table->count--;
+            return 0;
+        }
+        node_ptr = &node->next;
+    }
+
+    return -1;  // Not found
+}
+
+// Cleanup
+void hashtable_destroy(HashTable* table) {
+    for (int i = 0; i < TABLE_SIZE; i++) {
+        HashNode* node = table->buckets[i];
+        while (node) {
+            HashNode* next = node->next;
+            free(node->key);
+            free(node);
+            node = next;
+        }
+    }
+    free(table);
+}
+
+// Usage
+HashTable* config = hashtable_create();
+hashtable_set(config, "host", "localhost");
+hashtable_set(config, "port", "8080");
+hashtable_set(config, "debug", "true");
+
+char* host = hashtable_get(config, "host");
+printf("Host: %s\n", host);
+\end{lstlisting}
+
+\begin{notebox}
+\textbf{Why separate chaining?} There are two main ways to handle collisions:
+
+\begin{enumerate}
+    \item \textbf{Separate chaining} (what we're doing): Each bucket contains a linked list. Simple, works well even when table is 75\% full.
+
+    \item \textbf{Open addressing}: Store everything in the main array. On collision, try the next slot, then next, until you find empty space. Faster when table is mostly empty, but degrades terribly when full.
+\end{enumerate}
+
+Redis uses separate chaining. Python uses open addressing. Both work, but separate chaining is simpler and more predictable. It's the "safe" choice.
+
+\textbf{Load factor matters:} Load factor = count / TABLE\_SIZE. If you have 100 items in 128 buckets, load factor is 0.78.
+
+When load factor exceeds ~0.75, chains get long and lookups slow down. The fix: double the table size (128 → 256) and rehash everything. This is expensive but happens rarely—once you hit 96 items, then not again until 192.
+
+Professional implementations watch the load factor and automatically resize. We're keeping it simple here, but real hash tables in Redis, Python, etc. all do this.
+\end{notebox}
+
+\subsection{Circular Buffers: For Queues and Streaming}
+
+Circular buffers (also called ring buffers) are the unsung heroes of system programming. They're used everywhere: audio processing, network packet buffers, logging systems, kernel message queues, serial port drivers—anywhere you need a fixed-size queue.
+
+\textbf{What problem do they solve?} Imagine streaming audio from Spotify. Audio data arrives continuously, and your speakers play it continuously. You need a buffer in between—but you can't let it grow forever (you'd run out of memory), and you can't keep reallocating (too slow, causes glitches).
+
+Solution: A circular buffer! It's a fixed-size buffer that "wraps around" like a clock. When you write past the end, you wrap back to the beginning. It's perfect for producer-consumer problems where one thread/process generates data and another consumes it.
+
+\textbf{The mental model:} Picture a circular conveyor belt at a sushi restaurant. The chef (producer) puts plates on one side, customers (consumers) take plates from the other side. The belt is fixed-size and keeps rotating. If it's full, the chef waits. If it's empty, customers wait. Perfect!
+
+\begin{lstlisting}
+// Circular buffer - fixed size, efficient FIFO
+// Used by: Linux kernel, audio systems, network stacks
+
+typedef struct {
+    char* buffer;       // The actual data storage
+    size_t capacity;    // Total size (never changes)
+    size_t head;        // Where we write next (producer position)
+    size_t tail;        // Where we read next (consumer position)
+    size_t count;       // How many items currently stored
+} CircularBuffer;
+
+// Why both head/tail AND count?
+// - head and tail tell us WHERE in the buffer
+// - count tells us HOW MUCH data is there
+// - Without count, we can't distinguish "full" from "empty"
+//   (both would have head == tail)
+
+CircularBuffer* cbuf_create(size_t capacity) {
+    CircularBuffer* cb = malloc(sizeof(CircularBuffer));
+    if (!cb) return NULL;
+
+    cb->buffer = malloc(capacity);
+    if (!cb->buffer) {
+        free(cb);
+        return NULL;
+    }
+
+    cb->capacity = capacity;
+    cb->head = 0;     // Start at beginning
+    cb->tail = 0;     // Start at beginning
+    cb->count = 0;    // Empty initially
+
+    return cb;
+}
+
+// Write data (returns bytes written, which may be less than requested)
+size_t cbuf_write(CircularBuffer* cb, const char* data, size_t size) {
+    // Step 1: Calculate available space
+    // If capacity is 100 and count is 60, space is 40
+    size_t space = cb->capacity - cb->count;
+
+    // Step 2: Write only what fits
+    // If user wants to write 50 bytes but space is 40, write only 40
+    size_t to_write = size < space ? size : space;
+
+    // Step 3: Write bytes one at a time
+    for (size_t i = 0; i < to_write; i++) {
+        // Put byte at head position
+        cb->buffer[cb->head] = data[i];
+
+        // Move head forward, wrapping around if needed
+        // The magic: (head + 1) % capacity
+        // If head is 99 and capacity is 100: (99+1) % 100 = 0
+        // Head wraps from end back to beginning!
+        cb->head = (cb->head + 1) % cb->capacity;
+
+        cb->count++;  // One more byte in buffer
+    }
+
+    return to_write;  // Tell caller how many we actually wrote
+}
+
+// Read data (returns bytes read)
+size_t cbuf_read(CircularBuffer* cb, char* data, size_t size) {
+    // Step 1: Can't read more than what's available
+    size_t to_read = size < cb->count ? size : cb->count;
+
+    // Step 2: Read bytes one at a time
+    for (size_t i = 0; i < to_read; i++) {
+        // Get byte from tail position
+        data[i] = cb->buffer[cb->tail];
+
+        // Move tail forward, wrapping around
+        // Tail "chases" head around the circle
+        cb->tail = (cb->tail + 1) % cb->capacity;
+
+        cb->count--;  // One less byte in buffer
+    }
+
+    return to_read;
+
+    // Example: Capacity 8, head at 3, tail at 0, count 3
+    // Buffer: [A][B][C][_][_][_][_][_]
+    //         ^tail       ^head
+    // After read 2: tail moves to 2, count becomes 1
+    // Buffer: [A][B][C][_][_][_][_][_]
+    //               ^tail ^head
+}
+
+// Check if full/empty
+int cbuf_is_full(CircularBuffer* cb) {
+    return cb->count == cb->capacity;
+}
+
+int cbuf_is_empty(CircularBuffer* cb) {
+    return cb->count == 0;
+}
+
+void cbuf_destroy(CircularBuffer* cb) {
+    free(cb->buffer);
+    free(cb);
+}
+
+// Example: Audio buffer
+CircularBuffer* audio_buf = cbuf_create(4096);
+
+// Producer thread writes audio samples
+char samples[512];
+cbuf_write(audio_buf, samples, 512);
+
+// Consumer thread reads samples
+char output[256];
+cbuf_read(audio_buf, output, 256);
+\end{lstlisting}
+
+\begin{tipbox}
+\textbf{Why circular buffers are amazing:}
+
+\begin{enumerate}
+    \item \textbf{No dynamic allocation}: Once created, no malloc/free during operation. Perfect for real-time systems where allocation causes unpredictable delays.
+
+    \item \textbf{Predictable performance}: Every operation is O(1). No surprises, no slowdowns.
+
+    \item \textbf{Cache-friendly}: Data is in one contiguous block, making the CPU happy.
+
+    \item \textbf{Lock-free possible}: With careful design, one reader and one writer can work without locks. Blazing fast!
+\end{enumerate}
+
+The Linux kernel uses circular buffers for kernel log messages (\texttt{dmesg}). Audio systems use them to prevent buffer underruns (glitches). Network drivers use them for packet queues. Serial port drivers use them for incoming data. When you need a fixed-size queue, circular buffers are the answer.
+\end{tipbox}
+
+\subsection{Binary Trees: When You Need Ordering}
+
+Binary search trees (BSTs) are for when you need data \textit{sorted} and you need to search efficiently. Arrays give you O(n) search. Hash tables give you O(1) search but no ordering. BSTs give you O(log n) search \textit{and} maintain sorted order.
+
+\textbf{The mental model:} A binary tree is like a family tree or org chart, but with rules. Each node has at most two children: left and right. The rule: \textbf{left child < parent < right child}. This simple rule makes searching fast.
+
+\textbf{Example:} Insert numbers 5, 3, 7, 1, 4, 6, 9:
+\begin{verbatim}
+        5
+       / \
+      3   7
+     / \ / \
+    1  4 6  9
+\end{verbatim}
+
+Want to find 6? Start at 5. Is 6 < 5? No, go right to 7. Is 6 < 7? Yes, go left to 6. Found! Only 3 comparisons instead of scanning all 7 items.
+
+\textbf{Why O(log n)?} In a balanced tree, each level down cuts remaining nodes in half. 1000 nodes? ~10 levels. 1,000,000 nodes? ~20 levels. That's the power of logarithms!
+
+\textbf{The catch:} Trees can become unbalanced. If you insert 1, 2, 3, 4, 5 in order, you get a "stick" (linked list in disguise) and lose all benefits. Red-black trees and AVL trees fix this by rebalancing automatically. The Linux kernel uses red-black trees everywhere.
+
+\begin{lstlisting}
+// Simple binary search tree (BST)
+// Note: This is unbalanced. For production, use red-black trees
+// (Linux kernel) or AVL trees
+
+typedef struct TreeNode {
+    int key;            // What we're searching on
+    void* value;        // Associated data
+    struct TreeNode* left;   // Left child (smaller keys)
+    struct TreeNode* right;  // Right child (larger keys)
+} TreeNode;
+
+typedef struct {
+    TreeNode* root;
+    size_t count;
+} BST;
+
+BST* bst_create(void) {
+    BST* tree = malloc(sizeof(BST));
+    if (tree) {
+        tree->root = NULL;
+        tree->count = 0;
+    }
+    return tree;
+}
+
+// Insert (recursive) - this is elegant but uses call stack
+TreeNode* bst_insert_node(TreeNode* node, int key, void* value) {
+    // Base case: found empty spot, create new node here
+    if (!node) {
+        TreeNode* new_node = malloc(sizeof(TreeNode));
+        new_node->key = key;
+        new_node->value = value;
+        new_node->left = NULL;
+        new_node->right = NULL;
+        return new_node;
+    }
+
+    // Recursive case: decide which direction to go
+    if (key < node->key) {
+        // key is smaller, belongs in left subtree
+        // Recursively insert, then update left pointer
+        node->left = bst_insert_node(node->left, key, value);
+    } else if (key > node->key) {
+        // key is larger, belongs in right subtree
+        node->right = bst_insert_node(node->right, key, value);
+    } else {
+        // key equals node->key, already exists
+        // Update the value (like hash table)
+        node->value = value;
+    }
+
+    return node;
+
+    // How recursion works here:
+    // To insert 6 into tree with root 5:
+    // 1. 6 > 5, so recurse on right subtree
+    // 2. Right subtree might be empty → create node 6
+    // 3. Return node 6 back up
+    // 4. Set node 5's right pointer to node 6
+    // Done!
+}
+
+void bst_insert(BST* tree, int key, void* value) {
+    tree->root = bst_insert_node(tree->root, key, value);
+    tree->count++;
+}
+
+// Search (iterative - faster than recursive, no stack overhead)
+void* bst_search(BST* tree, int key) {
+    TreeNode* node = tree->root;  // Start at top
+
+    // Keep going down until we find it or hit a dead end
+    while (node) {
+        if (key == node->key) {
+            // Found it!
+            return node->value;
+        } else if (key < node->key) {
+            // Key is smaller, search left subtree
+            node = node->left;
+        } else {
+            // Key is larger, search right subtree
+            node = node->right;
+        }
+    }
+
+    return NULL;  // Reached NULL, key doesn't exist
+
+    // Example: Search for 6 in tree with root 5
+    // Start at 5: 6 > 5, go right
+    // At node 7: 6 < 7, go left
+    // At node 6: 6 == 6, found! Return value.
+    //
+    // Why iterative instead of recursive?
+    // - No function call overhead
+    // - No risk of stack overflow on deep trees
+    // - Slightly faster in practice
+}
+
+// In-order traversal (prints keys in sorted order)
+void bst_traverse_inorder(TreeNode* node,
+                         void (*callback)(int key, void* value)) {
+    if (!node) return;
+
+    bst_traverse_inorder(node->left, callback);
+    callback(node->key, node->value);
+    bst_traverse_inorder(node->right, callback);
+}
+
+// Cleanup (post-order)
+void bst_destroy_node(TreeNode* node) {
+    if (!node) return;
+    bst_destroy_node(node->left);
+    bst_destroy_node(node->right);
+    free(node);
+}
+
+void bst_destroy(BST* tree) {
+    bst_destroy_node(tree->root);
+    free(tree);
+}
+
+// Usage
+BST* users = bst_create();
+bst_insert(users, 42, "Alice");
+bst_insert(users, 17, "Bob");
+bst_insert(users, 99, "Charlie");
+
+char* name = bst_search(users, 42);
+printf("User 42: %s\n", name);  // Alice
+\end{lstlisting}
+
+\begin{warningbox}
+\textbf{The unbalanced tree problem:} If you insert sorted data (1, 2, 3, 4, 5...), the tree degenerates into a linked list:
+\begin{verbatim}
+    1
+     \
+      2
+       \
+        3
+         \
+          4
+           \
+            5
+\end{verbatim}
+
+Now search is O(n) again! All benefits lost. This actually happens in practice—imagine inserting timestamps or IDs in order.
+
+\textbf{Solutions—balanced tree variants:}
+\begin{itemize}
+    \item \textbf{Red-black trees}: Linux kernel's \texttt{rbtree}. Guarantees O(log n) by keeping tree "roughly" balanced. After every insert/delete, performs rotations to maintain balance. Most common in systems programming.
+
+    \item \textbf{AVL trees}: More strictly balanced than red-black. Slightly faster search, slightly slower insert/delete. Good when reads outnumber writes.
+
+    \item \textbf{B-trees}: Not binary (many children per node). Used by every database (SQLite, PostgreSQL, MySQL). Optimized for disk I/O—read entire disk blocks at once.
+
+    \item \textbf{Splay trees}: Self-adjusting. Recently accessed items move to top. Good for non-uniform access patterns.
+\end{itemize}
+
+\textbf{Critical advice:} Don't implement balanced trees yourself unless you're writing a database or OS kernel. The algorithms are tricky and easy to get wrong. Use proven libraries: \texttt{<sys/tree.h>} on BSD, Linux kernel's rbtree, or just use a hash table (often good enough).
+\end{warningbox}
+
+\subsection{Skip Lists: Probabilistic Alternative to Trees}
+
+Skip lists are the "lazy" alternative to balanced trees. Instead of carefully maintaining balance, they use randomness. Sounds crazy, but it works beautifully! Redis uses skip lists for sorted sets (ZSET), and they're simpler to implement than red-black trees.
+
+\textbf{The idea:} A skip list is multiple linked lists stacked on top of each other. The bottom list contains all elements. Each higher list is a "fast lane" that skips elements. Like a highway system: local roads connect everything, highways skip to major cities, and interstates skip even further.
+
+\textbf{How it works:} When you search for an element, start at the highest level. Follow pointers until you overshoot, then drop down a level. Repeat until you find the element or reach bottom. You "skip over" large sections, hence the name.
+
+\textbf{Example:} Skip list with 3 levels for numbers 1, 3, 5, 7, 9:
+\begin{verbatim}
+Level 3: 1 -----------------> 9 -> NULL
+Level 2: 1 -----> 5 --------> 9 -> NULL
+Level 1: 1 -> 3 -> 5 -> 7 -> 9 -> NULL
+\end{verbatim}
+
+To find 7: Start at level 3 at 1. Next is 9 > 7, so drop to level 2. At 5. Next is 9 > 7, drop to level 1. At 5, 7, found! Only checked 5 nodes, not all 9.
+
+\textbf{Why "probabilistic"?} When inserting, we flip a coin to decide the node's height. 50\% chance it's height 1, 25\% chance height 2, 12.5\% chance height 3, etc. On average, this creates a balanced structure without explicit balancing!
+
+\begin{lstlisting}
+// Skip list - used by Redis for sorted sets
+// Simpler than red-black trees, similar performance
+
+#define MAX_LEVEL 16  // Max height of any node
+
+typedef struct SkipNode {
+    int key;
+    void* value;
+    struct SkipNode* forward[MAX_LEVEL];  // Array of forward pointers
+    // forward[0] = next node at level 0 (bottom)
+    // forward[1] = next node at level 1 (one up)
+    // forward[2] = next node at level 2 (two up)
+    // etc.
+} SkipNode;
+
+typedef struct {
+    SkipNode* header;
+    int level;  // Current max level
+} SkipList;
+
+// Random level for new nodes (geometric distribution)
+// This is the "magic" of skip lists—randomness creates balance!
+int random_level(void) {
+    int level = 1;  // Every node is at least level 1
+
+    // Flip coins: 50% chance to go higher each time
+    // Level 1: 100% (guaranteed)
+    // Level 2: 50% (half the nodes)
+    // Level 3: 25% (quarter of nodes)
+    // Level 4: 12.5% (eighth of nodes)
+    // This creates the "fast lanes" naturally!
+    while (rand() < RAND_MAX / 2 && level < MAX_LEVEL) {
+        level++;
+    }
+    return level;
+
+    // Why does randomness work? Law of large numbers.
+    // With many nodes, distribution averages out to
+    // create balanced structure. No explicit rebalancing needed!
+}
+
+SkipList* skiplist_create(void) {
+    SkipList* list = malloc(sizeof(SkipList));
+    list->level = 1;
+
+    // Create header node
+    list->header = malloc(sizeof(SkipNode));
+    list->header->key = INT_MIN;
+    for (int i = 0; i < MAX_LEVEL; i++) {
+        list->header->forward[i] = NULL;
+    }
+
+    return list;
+}
+
+void skiplist_insert(SkipList* list, int key, void* value) {
+    SkipNode* update[MAX_LEVEL];
+    SkipNode* current = list->header;
+
+    // Find insertion point at each level
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (current->forward[i] &&
+               current->forward[i]->key < key) {
+            current = current->forward[i];
+        }
+        update[i] = current;
+    }
+
+    // Create new node with random level
+    int new_level = random_level();
+    if (new_level > list->level) {
+        for (int i = list->level; i < new_level; i++) {
+            update[i] = list->header;
+        }
+        list->level = new_level;
+    }
+
+    SkipNode* new_node = malloc(sizeof(SkipNode));
+    new_node->key = key;
+    new_node->value = value;
+
+    // Insert at each level
+    for (int i = 0; i < new_level; i++) {
+        new_node->forward[i] = update[i]->forward[i];
+        update[i]->forward[i] = new_node;
+    }
+}
+
+void* skiplist_search(SkipList* list, int key) {
+    SkipNode* current = list->header;
+
+    // Start from highest level, drop down when needed
+    for (int i = list->level - 1; i >= 0; i--) {
+        while (current->forward[i] &&
+               current->forward[i]->key < key) {
+            current = current->forward[i];
+        }
+    }
+
+    current = current->forward[0];
+    if (current && current->key == key) {
+        return current->value;
+    }
+
+    return NULL;
+}
+
+// Why Redis chose skip lists over red-black trees:
+//
+// 1. Simpler implementation: ~200 lines vs 1000+ for red-black trees
+// 2. Easier to understand: No complex rotation cases
+// 3. Easier to debug: Can visualize the structure easily
+// 4. Similar performance: O(log n) in practice
+// 5. Better for range scans: Following level 0 gives sorted order
+// 6. Lock-free variants exist: Easier than lock-free trees
+// 7. Probabilistic, not deterministic: Randomness is simple
+//
+// The trade-off: Red-black trees have GUARANTEED O(log n).
+// Skip lists have EXPECTED O(log n) (could theoretically be worse,
+// but probability of bad luck decreases exponentially).
+//
+// In practice, skip lists perform identically to balanced trees
+// and are much simpler to implement correctly.
+\end{lstlisting}
+
+\subsection{Tries (Prefix Trees): For String Lookups}
+
+Tries are perfect for autocomplete, spell checkers, and IP routing tables. They provide O(k) lookup where k is the key length.
+
+\begin{lstlisting}
+// Trie (prefix tree) for string keys
+// Used by: spell checkers, autocomplete, IP routing
+
+#define ALPHABET_SIZE 26
+
+typedef struct TrieNode {
+    struct TrieNode* children[ALPHABET_SIZE];
+    int is_end;      // Is this a complete word?
+    void* value;     // Associated data
+} TrieNode;
+
+typedef struct {
+    TrieNode* root;
+} Trie;
+
+TrieNode* trie_node_create(void) {
+    TrieNode* node = calloc(1, sizeof(TrieNode));
+    return node;  // calloc zeros all children pointers
+}
+
+Trie* trie_create(void) {
+    Trie* trie = malloc(sizeof(Trie));
+    trie->root = trie_node_create();
+    return trie;
+}
+
+void trie_insert(Trie* trie, const char* key, void* value) {
+    TrieNode* node = trie->root;
+
+    for (const char* p = key; *p; p++) {
+        int index = tolower(*p) - 'a';  // Assume lowercase a-z
+
+        if (!node->children[index]) {
+            node->children[index] = trie_node_create();
+        }
+
+        node = node->children[index];
+    }
+
+    node->is_end = 1;
+    node->value = value;
+}
+
+void* trie_search(Trie* trie, const char* key) {
+    TrieNode* node = trie->root;
+
+    for (const char* p = key; *p; p++) {
+        int index = tolower(*p) - 'a';
+
+        if (!node->children[index]) {
+            return NULL;  // Key not found
+        }
+
+        node = node->children[index];
+    }
+
+    return node->is_end ? node->value : NULL;
+}
+
+// Check if prefix exists
+int trie_has_prefix(Trie* trie, const char* prefix) {
+    TrieNode* node = trie->root;
+
+    for (const char* p = prefix; *p; p++) {
+        int index = tolower(*p) - 'a';
+
+        if (!node->children[index]) {
+            return 0;
+        }
+
+        node = node->children[index];
+    }
+
+    return 1;
+}
+
+// Usage: Dictionary
+Trie* dict = trie_create();
+trie_insert(dict, "cat", "a feline animal");
+trie_insert(dict, "car", "a vehicle");
+trie_insert(dict, "card", "a piece of paper");
+
+void* def = trie_search(dict, "cat");
+printf("Cat: %s\n", (char*)def);
+
+// Check prefix
+if (trie_has_prefix(dict, "ca")) {
+    printf("Words starting with 'ca' exist\n");
+}
+\end{lstlisting}
+
+\begin{tipbox}
+\textbf{Tries are memory-hungry but fast:} Each node needs ALPHABET\_SIZE pointers. For large alphabets (Unicode), use compressed tries (radix trees) like Git uses for file paths. Redis uses radix trees for key lookups.
+\end{tipbox}
+
+\subsection{Bloom Filters: Probabilistic Set Membership}
+
+Bloom filters answer "Is X in the set?" with:
+\begin{itemize}
+    \item \textbf{Maybe yes} (with controllable false positive rate)
+    \item \textbf{Definitely no} (no false negatives)
+\end{itemize}
+
+Used by: Chrome (malicious URLs), Cassandra (disk reads), Bitcoin (transaction filtering).
+
+\begin{lstlisting}
+// Bloom filter - space-efficient probabilistic set
+// Perfect for "probably contains" checks
+
+#define BLOOM_SIZE 1024  // Bit array size
+#define NUM_HASHES 3     // Number of hash functions
+
+typedef struct {
+    unsigned char bits[BLOOM_SIZE / 8];  // Bit array
+    size_t count;
+} BloomFilter;
+
+// Hash functions (simple for demo, use better in production)
+unsigned int hash1(const char* str) {
+    unsigned int hash = 0;
+    while (*str) hash = hash * 31 + *str++;
+    return hash % BLOOM_SIZE;
+}
+
+unsigned int hash2(const char* str) {
+    unsigned int hash = 5381;
+    while (*str) hash = hash * 33 + *str++;
+    return hash % BLOOM_SIZE;
+}
+
+unsigned int hash3(const char* str) {
+    unsigned int hash = 0;
+    while (*str) hash = hash * 65599 + *str++;
+    return hash % BLOOM_SIZE;
+}
+
+BloomFilter* bloom_create(void) {
+    BloomFilter* bf = calloc(1, sizeof(BloomFilter));
+    return bf;
+}
+
+// Set bit at position
+void bloom_set_bit(BloomFilter* bf, unsigned int pos) {
+    bf->bits[pos / 8] |= (1 << (pos % 8));
+}
+
+// Get bit at position
+int bloom_get_bit(BloomFilter* bf, unsigned int pos) {
+    return (bf->bits[pos / 8] & (1 << (pos % 8))) != 0;
+}
+
+// Add element
+void bloom_add(BloomFilter* bf, const char* str) {
+    bloom_set_bit(bf, hash1(str));
+    bloom_set_bit(bf, hash2(str));
+    bloom_set_bit(bf, hash3(str));
+    bf->count++;
+}
+
+// Check membership (may have false positives)
+int bloom_maybe_contains(BloomFilter* bf, const char* str) {
+    return bloom_get_bit(bf, hash1(str)) &&
+           bloom_get_bit(bf, hash2(str)) &&
+           bloom_get_bit(bf, hash3(str));
+}
+
+// Example: Spam filter
+BloomFilter* spam_filter = bloom_create();
+bloom_add(spam_filter, "viagra");
+bloom_add(spam_filter, "casino");
+bloom_add(spam_filter, "lottery");
+
+if (bloom_maybe_contains(spam_filter, "viagra")) {
+    // Maybe spam (could be false positive)
+    // Do expensive check
+}
+
+if (!bloom_maybe_contains(spam_filter, "hello")) {
+    // Definitely not spam
+}
+\end{lstlisting}
+
+\begin{notebox}
+\textbf{Why Bloom filters?} Tiny memory footprint. A Bloom filter with 1\% false positive rate needs only ~10 bits per element. Compare that to a hash table which needs ~100 bits per element. Chrome uses Bloom filters to check billions of URLs against a malicious URL database—it would be impossible with hash tables.
+\end{notebox}
+
+\subsection{Comparison: When to Use Which Structure}
+
+\begin{center}
+\begin{tabular}{|l|l|l|l|}
+\hline
+\textbf{Structure} & \textbf{Best For} & \textbf{Time} & \textbf{Space} \\
+\hline
+Dynamic Array & Sequential access, append & O(1) avg & O(n) \\
+Hash Table & Key-value, fast lookup & O(1) avg & O(n) \\
+Circular Buffer & FIFO queue, streaming & O(1) & O(capacity) \\
+BST (balanced) & Sorted data, range queries & O(log n) & O(n) \\
+Skip List & Simpler than trees & O(log n) avg & O(n) \\
+Trie & String prefixes, autocomplete & O(k) & O(alphabet × n) \\
+Bloom Filter & Set membership, huge sets & O(k) & O(bits) \\
+\hline
+\end{tabular}
+\end{center}
+
+\begin{tipbox}
+\textbf{Real-world advice:}
+\begin{itemize}
+    \item \textbf{Start with arrays}: 90\% of the time, a dynamic array is enough
+    \item \textbf{Hash tables for lookups}: When you need fast key-based access
+    \item \textbf{Don't write balanced trees}: Use libraries (BSD tree.h, Linux rbtree)
+    \item \textbf{Circular buffers for streaming}: Audio, network, logs
+    \item \textbf{Tries for strings}: If you have many string keys with common prefixes
+    \item \textbf{Bloom filters when space matters}: Billion-element sets in megabytes
+\end{itemize}
+\end{tipbox}
+
+\section{Summary: Struct Mastery}
+
+You've now learned everything professionals know about structs and data structures in C. This chapter covered:
+
+\subsection{Struct Fundamentals}
+
+\begin{itemize}
+    \item \textbf{Memory layout}: Order members largest-to-smallest to minimize padding (can save 50\% memory)
+    \item \textbf{Alignment}: CPUs require data aligned to natural boundaries for performance
+    \item \textbf{Padding}: Compiler adds invisible gaps—understand them to optimize
+    \item \textbf{Packing}: Use \texttt{\#pragma pack} only for external formats, not normal code
+\end{itemize}
+
+\subsection{Advanced Struct Patterns}
+
+\begin{itemize}
+    \item \textbf{Flexible arrays}: C99 flexible array members for variable-length data
+    \item \textbf{Inheritance}: First member = base struct for OOP-style inheritance
+    \item \textbf{VTables}: Function pointer tables for true polymorphism
+    \item \textbf{Type tags}: Runtime type information for safe variant types
+    \item \textbf{Bit fields}: Pack booleans and small ints (but watch portability)
+    \item \textbf{Designated initializers}: Self-documenting, order-independent initialization
+    \item \textbf{Anonymous unions}: Cleaner access to variant data
+    \item \textbf{Intrusive lists}: Embed links in structs for zero-overhead containers
+\end{itemize}
+
+\subsection{Essential Data Structures}
+
+\begin{itemize}
+    \item \textbf{Dynamic arrays}: The most common structure—use for 80\% of cases
+    \item \textbf{Hash tables}: O(1) lookups for key-value pairs
+    \item \textbf{Circular buffers}: Perfect for queues, streaming, real-time systems
+    \item \textbf{Binary trees}: Use balanced variants (red-black, AVL) in production
+    \item \textbf{Skip lists}: Simpler than trees, used by Redis
+    \item \textbf{Tries}: String prefixes, autocomplete, routing tables
+    \item \textbf{Bloom filters}: Space-efficient probabilistic membership testing
+\end{itemize}
+
+\subsection{Critical Best Practices}
+
+\begin{itemize}
+    \item \textbf{Deep copy}: Write custom functions for structs with pointers
+    \item \textbf{Never use memcmp}: Padding bytes have undefined values
+    \item \textbf{Explicit serialization}: Write fields individually, never dump raw structs
+    \item \textbf{Always zero-initialize}: Prevents undefined behavior bugs
+    \item \textbf{Choose the right structure}: Arrays for 90\%, hash tables for lookups, specialized for specific needs
+\end{itemize}
+
+\begin{tipbox}
+Structs are the foundation of C programming—every data structure, every abstraction, every pattern is built from them. Master struct layout and you'll write memory-efficient code. Master struct patterns and you'll write maintainable code. Master data structures and you'll write professional code.
+
+These techniques power:
+\begin{itemize}
+    \item \textbf{Linux kernel}: Intrusive lists, red-black trees, circular buffers
+    \item \textbf{Redis}: Skip lists, hash tables, dynamic arrays
+    \item \textbf{SQLite}: B-trees, hash tables, flexible arrays
+    \item \textbf{Git}: Tries (radix trees), hash tables, packed objects
+    \item \textbf{Chrome}: Bloom filters for malicious URL checks
+\end{itemize}
+
+You now have the complete professional toolkit. Start with simple arrays, graduate to hash tables when needed, and use specialized structures when they genuinely solve your problem better. And remember: the best data structure is the simplest one that meets your requirements.
+\end{tipbox}

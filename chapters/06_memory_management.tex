@@ -1,0 +1,1175 @@
+\chapter{Memory Management Idioms}
+
+\section{The Reality of Memory in C}
+
+Memory management in C is where theory meets brutal reality. You have complete control, which means complete responsibility. One mistake—a dangling pointer, a double-free, a tiny leak—and your production server crashes at 2 AM. Or worse, it doesn't crash immediately. It corrupts data silently for weeks until someone notices the financial reports are wrong.
+
+Think of memory management like managing a parking lot. Each malloc() is like a car entering and getting a parking spot. Each free() is like a car leaving, making that spot available again. Simple enough, right? But what if:
+\begin{itemize}
+    \item You give out the same spot to two different cars (double allocation)
+    \item Someone tries to drive away a car that already left (use-after-free)
+    \item Cars just pile up and never leave, blocking new cars (memory leak)
+    \item You forget which spot a car is in and can't tell it to leave (lost pointer)
+\end{itemize}
+
+These aren't just theoretical problems—they're the daily reality of C programming. Here's what separates hobby C programmers from professionals: hobby programmers think malloc() and free() are the whole story. Professionals know that's just the beginning. This chapter covers the patterns, tools, and hard-won wisdom that keep production systems stable.
+
+\begin{warningbox}
+Memory bugs are the hardest to debug. They're non-deterministic, they manifest far from their cause, and they corrupt state in ways that make the debugger lie to you. The patterns in this chapter aren't just optimizations—they're survival techniques.
+\end{warningbox}
+
+\section{The Ownership Pattern: Who Frees What?}
+
+The \#1 cause of memory bugs: unclear ownership. Who is responsible for freeing this pointer? If you can't answer that immediately, you have a bug waiting to happen.
+
+Imagine you borrow a book from a friend. The ownership is clear: it's their book, you're just using it temporarily. You don't throw it away when you're done—you return it to them. But what if someone hands you a book and walks away without a word? Is it yours now? Should you keep it? Throw it away? Give it to someone else? This confusion is exactly what happens with unclear memory ownership in C.
+
+Let's start with the most common source of memory bugs: ambiguous ownership. Look at these function signatures and ask yourself: who is responsible for freeing the returned pointer?
+
+\begin{lstlisting}
+// AMBIGUOUS - who frees the returned string?
+// Does this return a pointer to a static buffer?
+// Or does it allocate memory that I must free?
+// Without documentation, you're guessing. And guessing wrong means leaks or crashes.
+char* get_username(int user_id);
+
+// CLEAR - caller must free
+char* create_username(int user_id);
+
+// CLEAR - function borrows, doesn't own
+void print_username(const char* username);
+
+// CLEAR - function takes ownership
+void consume_username(char* username);
+
+// CLEAR - function returns borrowed reference
+const char* get_cached_username(int user_id);
+\end{lstlisting}
+
+\subsection{Naming Conventions That Save Lives}
+
+Professional C codebases use naming conventions to communicate ownership. These aren't just style preferences—they're critical safety mechanisms. When you see a function name, you should immediately know what it does with memory.
+
+Think of function names as instructions on a package. "create\_" is like "assembly required—you must dispose." "print\_" is like "for display only—do not consume." "destroy\_" is like "dispose of properly." These naming patterns tell you exactly what to do with the memory, without having to read documentation or guess.
+
+\begin{lstlisting}
+// Allocating functions (caller must free):
+// If you see create_, new_, alloc_, or make_ - you OWN that pointer
+// You allocated it, you must free it. No exceptions.
+char* create_string(const char* src);
+User* new_user(const char* name);
+Buffer* alloc_buffer(size_t size);
+Message* make_message(const char* text);
+
+// Borrowing functions (doesn't free):
+void print_user(const User* user);
+int validate_buffer(const Buffer* buf);
+void log_message(const Message* msg);
+
+// Consuming functions (takes ownership, will free):
+void destroy_user(User* user);
+void free_buffer(Buffer* buf);
+void delete_message(Message* msg);
+void consume_string(char* str);  // frees str
+
+// Returning borrowed references (don't free!):
+const char* user_get_name(const User* user);
+const char* get_error_string(int code);
+
+// Real-world example - very clear ownership
+FILE* fopen(const char* path, const char* mode);  // Returns owned
+int fclose(FILE* stream);  // Takes ownership, frees
+\end{lstlisting}
+
+\begin{tipbox}
+In professional codebases, ownership is documented in every function comment. "Caller must free", "Borrows pointer", "Takes ownership"—these phrases should be everywhere. Future you (at 3 AM debugging a customer's crash dump) will be grateful.
+\end{tipbox}
+
+\subsection{The Transfer Pattern}
+
+Sometimes ownership needs to change hands during an operation. This is tricky because it violates the simple "who allocates, frees" rule. The key is to make transfers explicit and document them heavily.
+
+Imagine a relay race: the first runner has the baton (ownership), then hands it off to the second runner. The first runner no longer has it—ownership transferred. Same with memory: sometimes a function takes something you own, does something with it, and gives you something else back. The original thing is gone (freed), but you now own the new thing. It's like trading in your old car for store credit—the car is gone, but now you have money that's yours to spend (or free, in programming terms).
+
+\begin{lstlisting}
+// Ownership transfer - carefully documented
+// This pattern is common in parsers, compilers, and data structure libraries
+typedef struct {
+    char* data;
+    size_t size;
+} Buffer;
+
+// Creates buffer - caller owns it
+Buffer* buffer_create(size_t size) {
+    Buffer* buf = malloc(sizeof(Buffer));
+    if (!buf) return NULL;
+
+    buf->data = malloc(size);
+    if (!buf->data) {
+        free(buf);
+        return NULL;
+    }
+
+    buf->size = size;
+    return buf;
+}
+
+// Takes ownership of buffer, transfers ownership of data
+// This is the "take" pattern: we take the buffer (and free it),
+// but we give you the data (and you must free it)
+// Caller must free returned pointer, but NOT the buffer
+char* buffer_take_data(Buffer* buf) {
+    if (!buf) return NULL;
+
+    char* data = buf->data;
+    buf->data = NULL;  // Transfer ownership
+    buf->size = 0;
+
+    free(buf);  // Free container, but not data
+    return data;  // Caller now owns data
+}
+
+// Usage
+Buffer* buf = buffer_create(1024);
+strcpy(buf->data, "Hello");
+
+char* data = buffer_take_data(buf);  // buf is freed, data is ours
+// buf is now invalid, don't use it
+printf("%s\n", data);
+free(data);  // We must free data
+\end{lstlisting}
+
+\section{RAII in C: Automatic Cleanup}
+
+C doesn't have destructors, but GCC and Clang have a solution: the cleanup attribute. This is one of those compiler extensions that changes how you write C. Once you use it, you'll never want to go back to manual cleanup.
+
+The idea is simple: mark a variable with a cleanup function, and the compiler automatically calls that function when the variable goes out of scope. It's like C++ RAII, but you have to opt-in per variable.
+
+Think of it like a hotel room: when you check out, housekeeping automatically comes to clean up. You don't have to remember to call housekeeping yourself—it happens automatically when you leave. The cleanup attribute does the same thing for your variables: when the variable "checks out" (goes out of scope), cleanup happens automatically. No matter how you leave the function—return normally, return early from an if statement, whatever—cleanup always happens.
+
+\begin{lstlisting}
+// The cleanup attribute - GCC/Clang extension
+// This tells the compiler: "When this variable goes out of scope,
+// call this function with a pointer to the variable"
+#define CLEANUP(func) __attribute__((cleanup(func)))
+
+// Cleanup functions - note the pointer-to-pointer
+// Why pointer-to-pointer? Because cleanup gets the ADDRESS of the variable
+// So for "FILE* f", cleanup receives "FILE** fp"
+void cleanup_file(FILE** fp) {
+    if (fp && *fp) {
+        fclose(*fp);
+        *fp = NULL;  // Prevent double-close
+    }
+}
+
+void cleanup_string(char** str) {
+    if (str) {
+        free(*str);
+        *str = NULL;  // Prevent double-free
+    }
+}
+
+void cleanup_fd(int* fd) {
+    if (fd && *fd >= 0) {
+        close(*fd);
+        *fd = -1;  // Mark as closed
+    }
+}
+
+// Usage - automatic cleanup!
+void process_file(const char* path) {
+    FILE* CLEANUP(cleanup_file) f = fopen(path, "r");
+    if (!f) {
+        return;  // cleanup_file called automatically
+    }
+
+    char* CLEANUP(cleanup_string) buffer = malloc(4096);
+    if (!buffer) {
+        return;  // Both f and buffer cleaned up
+    }
+
+    int CLEANUP(cleanup_fd) outfd = open("output.txt", O_WRONLY);
+    if (outfd < 0) {
+        return;  // All three cleaned up in reverse order
+    }
+
+    // Do work...
+
+    // If we reach here or return early, everything is cleaned up
+    // No goto cleanup needed!
+}
+
+// This is how systemd, many Linux utilities work
+// Also used in kernel code (with different macros)
+
+// The magic here: no matter how you exit this function (return, goto, exception),
+// the cleanup functions are called. In reverse order of declaration.
+// It's like stack unwinding, but done by the compiler at compile time.
+\end{lstlisting}
+
+\begin{notebox}
+The cleanup attribute is a GCC/Clang extension, not standard C. But it's widely supported and used in production code (systemd, GNOME, many Linux projects). Variables are cleaned up in reverse order of declaration—LIFO, just like stack unwinding.
+\end{notebox}
+
+\section{Pool Allocator: Fast Allocation, Fast Deallocation}
+
+When you're allocating thousands of small objects of similar size, malloc() becomes a bottleneck. Why? Because malloc() is general-purpose—it has to handle any size, any alignment, any pattern. That generality has cost.
+
+Pool allocators trade generality for speed. You pre-allocate a big chunk of memory and hand out pieces of it. Allocation is a simple pointer bump—no searching free lists, no coalescing blocks, no metadata overhead. It's O(1) and cache-friendly.
+
+Imagine a restaurant during lunch rush. Normal malloc() is like each customer ordering a custom meal—the chef has to prepare each one individually, checking ingredients, measuring portions, plating carefully. Slow! A pool allocator is like a buffet: everything is pre-made in a big batch, and people just grab what they need. Super fast! The trade-off? The buffet only works if everyone wants similar food (similar-sized allocations), and you can't take food back to the kitchen one plate at a time—you clear the whole buffet at once when lunch is over.
+
+The trade-off? You can't free individual allocations. You free the whole pool at once. This works perfectly for request-scoped allocations (web servers), frame-scoped allocations (games), or parse-scoped allocations (compilers).
+
+\begin{lstlisting}
+// Simple bump-pointer pool allocator
+// This is the simplest possible allocator, and often the fastest
+typedef struct {
+    void* memory;      // Pre-allocated block (malloc'd once)
+    size_t size;       // Total size
+    size_t used;       // Bytes used
+    size_t alignment;  // Alignment requirement
+} MemoryPool;
+
+MemoryPool* pool_create(size_t size, size_t alignment) {
+    if (alignment == 0) alignment = 8;  // Default
+
+    MemoryPool* pool = malloc(sizeof(MemoryPool));
+    if (!pool) return NULL;
+
+    pool->memory = malloc(size);
+    if (!pool->memory) {
+        free(pool);
+        return NULL;
+    }
+
+    pool->size = size;
+    pool->used = 0;
+    pool->alignment = alignment;
+
+    return pool;
+}
+
+void* pool_alloc(MemoryPool* pool, size_t size) {
+    if (!pool || size == 0) return NULL;
+
+    // Align size to pool alignment
+    // Why align? CPU loads/stores are faster when data is aligned to
+    // natural boundaries (4-byte ints on 4-byte boundaries, etc.)
+    // This bit-twiddling rounds up to the next multiple of alignment
+    size_t aligned_size = (size + pool->alignment - 1) &
+                          ~(pool->alignment - 1);
+
+    // Check if we have space
+    if (pool->used + aligned_size > pool->size) {
+        return NULL;  // Pool exhausted
+    }
+
+    // Bump pointer allocation - super fast!
+    // No searching, no bookkeeping, just arithmetic
+    // This is why it's called "bump pointer" - we just bump it forward
+    void* ptr = (char*)pool->memory + pool->used;
+    pool->used += aligned_size;
+
+    return ptr;
+}
+
+// Can't free individual allocations - that's the point!
+// The entire design relies on not tracking individual allocations
+// Free everything at once by resetting the pointer
+void pool_reset(MemoryPool* pool) {
+    if (pool) {
+        pool->used = 0;  // Just reset the pointer
+        // All allocations are now invalid
+    }
+}
+
+void pool_destroy(MemoryPool* pool) {
+    if (pool) {
+        free(pool->memory);
+        free(pool);
+    }
+}
+
+// Real-world example: request handling
+// This is exactly how high-performance web servers work
+void handle_request(Request* req) {
+    // Create pool for this request
+    MemoryPool* pool = pool_create(1024 * 1024, 8);  // 1MB
+
+    // Allocate request-scoped data
+    // All these allocations are O(1) pointer bumps
+    // No fragmentation, no searching, no overhead
+    char* buffer = pool_alloc(pool, 4096);
+    ParsedRequest* parsed = pool_alloc(pool, sizeof(ParsedRequest));
+    Response* response = pool_alloc(pool, sizeof(Response));
+
+    // ... process request ...
+
+    // Free everything at once - O(1)
+    pool_destroy(pool);
+    // Much faster than freeing each allocation individually
+}
+\end{lstlisting}
+
+\begin{tipbox}
+Pool allocators are perfect for request-scoped allocations (web servers, game frames, parsers). Allocation is O(1) bump-pointer, deallocation is O(1) reset. nginx, Apache, game engines all use variants of this pattern. (Though be careful—accessing freed memory after pool\_reset is instant undefined behavior.)
+\end{tipbox}
+
+\subsection{Real Production Pattern: Per-Request Pools}
+
+\begin{lstlisting}
+// How web servers actually do it
+typedef struct {
+    MemoryPool* pool;
+    // ... request data ...
+} RequestContext;
+
+// Wrapper function to make code cleaner
+// Now all code just calls request_alloc() and doesn't worry about pools
+void* request_alloc(RequestContext* ctx, size_t size) {
+    return pool_alloc(ctx->pool, size);
+}
+
+// All allocations use request_alloc
+void handle_http_request(RequestContext* ctx) {
+    // Everything allocated from request pool
+    char* headers = request_alloc(ctx, 2048);
+    char* body = request_alloc(ctx, 8192);
+    ParsedURL* url = request_alloc(ctx, sizeof(ParsedURL));
+
+    // ... handle request ...
+
+    // At end of request, destroy entire pool
+    // No individual frees needed!
+}
+
+// This is how nginx gets such good performance
+\end{lstlisting}
+
+\section{Arena Allocator: Growing Pools}
+
+Pool allocators have a fixed size. What if you don't know how much you'll need? Arena allocators grow automatically.
+
+An arena is like a pool, but when it runs out of space, it allocates another block and keeps going. You get the speed of pool allocation with the flexibility of dynamic sizing. The blocks form a linked list, and you allocate from the current block until it's full, then add a new block.
+
+Think of an arena allocator like a notebook for taking notes during a lecture. You start with one page (block), fill it up with notes (allocations), then flip to a new page when you run out of room. At the end of the lecture, you can tear out all the pages at once and recycle them—you don't erase each line individually. Fast writing, fast cleanup. The arena keeps adding new "pages" as needed, but cleans up everything at once.
+
+This is perfect for parsers, compilers, and any code that builds large data structures during a phase, then throws them all away. Clang uses arenas for AST nodes—allocate millions of nodes during parsing, free them all at once after code generation.
+
+\begin{lstlisting}
+#define ARENA_BLOCK_SIZE (64 * 1024)  // 64KB blocks
+// This size is a trade-off: too small = too many allocations
+// too large = wasted space. 64KB is a common sweet spot.
+
+typedef struct ArenaBlock {
+    struct ArenaBlock* next;
+    size_t used;
+    size_t size;
+    char data[];  // Flexible array member
+} ArenaBlock;
+
+typedef struct {
+    ArenaBlock* current;
+    ArenaBlock* first;
+    size_t total_allocated;
+} Arena;
+
+Arena* arena_create(void) {
+    Arena* arena = malloc(sizeof(Arena));
+    if (!arena) return NULL;
+
+    // Allocate first block
+    ArenaBlock* block = malloc(sizeof(ArenaBlock) + ARENA_BLOCK_SIZE);
+    if (!block) {
+        free(arena);
+        return NULL;
+    }
+
+    block->next = NULL;
+    block->used = 0;
+    block->size = ARENA_BLOCK_SIZE;
+
+    arena->current = block;
+    arena->first = block;
+    arena->total_allocated = ARENA_BLOCK_SIZE;
+
+    return arena;
+}
+
+void* arena_alloc(Arena* arena, size_t size) {
+    if (!arena || size == 0) return NULL;
+
+    // Align to 8 bytes
+    size = (size + 7) & ~7UL;
+
+    // Check if current block has space
+    // If not, we'll allocate a new block
+    if (arena->current->used + size > arena->current->size) {
+        // Need a new block
+        // Determine block size
+        // Usually the default, but if someone requests a huge allocation,
+        // give them a block exactly that size (don't waste space)
+        size_t block_size = ARENA_BLOCK_SIZE;
+        if (size > block_size) {
+            block_size = size;  // Large allocation gets its own block
+        }
+
+        ArenaBlock* block = malloc(sizeof(ArenaBlock) + block_size);
+        if (!block) return NULL;
+
+        block->next = NULL;
+        block->used = 0;
+        block->size = block_size;
+
+        // Link to chain
+        arena->current->next = block;
+        arena->current = block;
+        arena->total_allocated += block_size;
+    }
+
+    // Allocate from current block
+    void* ptr = arena->current->data + arena->current->used;
+    arena->current->used += size;
+
+    return ptr;
+}
+
+void arena_reset(Arena* arena) {
+    if (!arena) return;
+
+    // Reset all blocks but keep them allocated
+    for (ArenaBlock* block = arena->first; block; block = block->next) {
+        block->used = 0;
+    }
+
+    arena->current = arena->first;
+}
+
+void arena_destroy(Arena* arena) {
+    if (!arena) return;
+
+    // Free all blocks
+    ArenaBlock* block = arena->first;
+    while (block) {
+        ArenaBlock* next = block->next;
+        free(block);
+        block = next;
+    }
+
+    free(arena);
+}
+
+// Statistics for debugging/profiling
+void arena_stats(Arena* arena) {
+    if (!arena) return;
+
+    size_t num_blocks = 0;
+    size_t total_used = 0;
+    size_t total_wasted = 0;
+
+    for (ArenaBlock* b = arena->first; b; b = b->next) {
+        num_blocks++;
+        total_used += b->used;
+        total_wasted += (b->size - b->used);
+    }
+
+    printf("Arena: %zu blocks, %zu allocated, %zu used, %zu wasted\n",
+           num_blocks, arena->total_allocated, total_used, total_wasted);
+}
+
+// Real-world usage: compiler/parser
+void parse_file(const char* path) {
+    Arena* arena = arena_create();
+
+    // Parse creates AST nodes - all from arena
+    ASTNode* root = parse(path, arena);
+
+    // Process AST...
+    analyze(root);
+    codegen(root);
+
+    // Destroy entire AST in one go
+    arena_destroy(arena);
+    // Much faster than traversing tree and freeing each node
+}
+\end{lstlisting}
+
+\begin{notebox}
+Arena allocators are used in compilers (LLVM, GCC), game engines, and any code that builds large temporary data structures. Clang compiles faster partly because it uses arenas for AST nodes—no individual frees during compilation. (Though memory usage can grow large—trade-off between speed and memory.)
+\end{notebox}
+
+\section{Reference Counting: Shared Ownership}
+
+When multiple owners need the same data, reference counting solves the "who frees it?" problem. Instead of transferring ownership, we share it. Each owner increments the reference count when they take a reference, and decrements it when they're done. The last owner to decrement (reaching zero) frees the memory.
+
+Imagine a shared apartment with roommates. There's a shared Netflix account that everyone uses. Each roommate who wants to use it "retains" it (increments the count). When someone moves out, they "release" it (decrement the count). As long as someone is still using it (count > 0), you keep paying for the subscription. When the last roommate moves out (count reaches 0), you cancel the subscription (free the memory). Nobody has to coordinate who's responsible—the last person out automatically handles cleanup.
+
+This is how COM works on Windows, how Python's memory management works, and how Objective-C's ARC works. It's simple, deterministic, and solves a lot of problems. But it has gotchas (circular references, atomic overhead in multithreaded code).
+
+\begin{lstlisting}
+typedef struct {
+    int ref_count;     // Number of owners
+    size_t size;
+    char data[];       // Flexible array member
+} RefCountedBuffer;
+
+RefCountedBuffer* buffer_create(size_t size) {
+    RefCountedBuffer* buf = malloc(sizeof(RefCountedBuffer) + size);
+    if (buf) {
+        buf->ref_count = 1;  // Creator owns it
+        // Important: starts at 1, not 0! The creator is the first owner.
+        buf->size = size;
+        memset(buf->data, 0, size);
+    }
+    return buf;
+}
+
+// Increment reference count - new owner
+RefCountedBuffer* buffer_retain(RefCountedBuffer* buf) {
+    if (buf) {
+        buf->ref_count++;
+    }
+    return buf;
+}
+
+// Decrement reference count - owner done with it
+void buffer_release(RefCountedBuffer* buf) {
+    if (!buf) return;
+
+    buf->ref_count--;
+    if (buf->ref_count == 0) {
+        free(buf);  // Last owner frees it
+        // This is the whole magic of reference counting:
+        // The last person to release it cleans it up.
+        // No coordination needed, no explicit transfer of ownership.
+    }
+}
+
+// Usage
+void process_data(void) {
+    RefCountedBuffer* buf = buffer_create(1024);
+
+    // Share with worker thread
+    worker_thread_process(buffer_retain(buf));
+
+    // Share with another thread
+    logger_thread_log(buffer_retain(buf));
+
+    // We're done with it
+    buffer_release(buf);
+
+    // Buffer is freed when all three threads call buffer_release
+}
+\end{lstlisting}
+
+\subsection{Thread-Safe Reference Counting}
+
+The simple reference counting above has a fatal flaw in multithreaded code: ref\_count++ isn't atomic. Two threads can both read the same value, both increment it, both write back the same result—and you've lost a reference. Use atomic operations to fix this.
+
+\begin{lstlisting}
+#include <stdatomic.h>
+
+typedef struct {
+    atomic_int ref_count;  // Thread-safe counter
+    // atomic_int is from C11, provides lock-free atomic operations
+    size_t size;
+    char data[];
+} AtomicRefCountedBuffer;
+
+AtomicRefCountedBuffer* buffer_create_atomic(size_t size) {
+    AtomicRefCountedBuffer* buf =
+        malloc(sizeof(AtomicRefCountedBuffer) + size);
+    if (buf) {
+        atomic_init(&buf->ref_count, 1);
+        buf->size = size;
+    }
+    return buf;
+}
+
+AtomicRefCountedBuffer* buffer_retain_atomic(AtomicRefCountedBuffer* buf) {
+    if (buf) {
+        atomic_fetch_add(&buf->ref_count, 1);  // Thread-safe increment
+    }
+    return buf;
+}
+
+void buffer_release_atomic(AtomicRefCountedBuffer* buf) {
+    if (!buf) return;
+
+    // Thread-safe decrement-and-test
+    if (atomic_fetch_sub(&buf->ref_count, 1) == 1) {
+        // We were the last reference
+        free(buf);
+    }
+}
+
+// This is how COM objects work on Windows
+// Also similar to reference counting in CPython, Objective-C
+
+// Performance note: atomic operations are slower than regular operations
+// (they prevent CPU reordering and ensure visibility across cores)
+// But they're much faster than mutexes. Use them for ref counting.
+\end{lstlisting}
+
+\begin{warningbox}
+Reference counting seems simple but has gotchas: circular references cause leaks (A references B, B references A—neither freed). Also, the atomic operations have performance cost. Use only when you truly need shared ownership. (And consider weak references to break cycles, though that's beyond basic C.)
+\end{warningbox}
+
+\section{Custom Allocators: The Strategy Pattern}
+
+Sometimes you need to control allocation strategy at runtime. Custom allocators let you swap strategies. This is the Strategy pattern from design patterns: define an interface for allocation, and swap implementations as needed.
+
+Think of custom allocators like choosing a payment method at checkout. The store doesn't care if you pay with cash, credit card, or mobile payment—they all work through the same interface (swipe/tap/insert). But each method works differently internally. Custom allocators are the same: they all look the same from outside (alloc/free functions), but inside they can use completely different strategies. You can swap payment methods without rewriting the whole checkout process, just like you can swap allocators without rewriting your whole program.
+
+Why would you want this? Testing (inject a mock allocator), profiling (inject a counting allocator), performance (swap to a specialized allocator), debugging (inject a leak-detecting allocator). It's powerful because allocation strategy becomes a runtime decision, not a compile-time decision.
+
+\begin{lstlisting}
+// Allocator interface
+typedef void* (*AllocFunc)(size_t size, void* ctx);
+typedef void* (*ReallocFunc)(void* ptr, size_t size, void* ctx);
+typedef void (*FreeFunc)(void* ptr, void* ctx);
+
+typedef struct {
+    AllocFunc alloc;
+    ReallocFunc realloc;
+    FreeFunc free;
+    void* context;  // Allocator-specific data
+    // Context is the secret sauce: different allocators need different data
+    // Pool allocator: pointer to pool. Slab allocator: pointer to slab.
+    // This makes allocators polymorphic.
+    const char* name;  // For debugging
+} Allocator;
+
+// System allocator (default)
+void* sys_alloc(size_t size, void* ctx) {
+    (void)ctx;
+    return malloc(size);
+}
+
+void* sys_realloc(void* ptr, size_t size, void* ctx) {
+    (void)ctx;
+    return realloc(ptr, size);
+}
+
+void sys_free(void* ptr, void* ctx) {
+    (void)ctx;
+    free(ptr);
+}
+
+Allocator system_allocator = {
+    .alloc = sys_alloc,
+    .realloc = sys_realloc,
+    .free = sys_free,
+    .context = NULL,
+    .name = "system"
+};
+
+// Counting allocator (for leak detection)
+typedef struct {
+    size_t alloc_count;
+    size_t free_count;
+    size_t bytes_allocated;
+} CountingContext;
+
+void* counting_alloc(size_t size, void* ctx) {
+    CountingContext* cc = (CountingContext*)ctx;
+    cc->alloc_count++;
+    cc->bytes_allocated += size;
+    return malloc(size);
+}
+
+void counting_free(void* ptr, void* ctx) {
+    CountingContext* cc = (CountingContext*)ctx;
+    cc->free_count++;
+    free(ptr);
+}
+
+// Usage - inject allocator
+typedef struct {
+    Allocator* allocator;
+    // ... other fields ...
+} Context;
+
+void* context_alloc(Context* ctx, size_t size) {
+    return ctx->allocator->alloc(size, ctx->allocator->context);
+}
+
+void context_free(Context* ctx, void* ptr) {
+    ctx->allocator->free(ptr, ctx->allocator->context);
+}
+
+// Can swap allocators at runtime!
+Context ctx;
+ctx.allocator = &system_allocator;  // Use system malloc
+// ... or ...
+ctx.allocator = &counting_allocator;  // Track allocations
+// ... or ...
+ctx.allocator = &pool_allocator;  // Use pool
+\end{lstlisting}
+
+\begin{tipbox}
+This pattern is used in video games (swap allocators for different game systems), databases (different allocation strategies for different query types), and any code that needs testability (inject mock allocator for tests). It's the Strategy pattern from Gang of Four, applied to memory.
+\end{tipbox}
+
+\section{Memory Debugging: Finding Leaks and Corruption}
+
+Memory bugs are the worst kind of bugs. They're non-deterministic, they manifest far from their cause, and they corrupt state silently. You need tools to catch them. Here are patterns for building your own debugging tools.
+
+Think of memory bugs like a silent leak in your water pipes. You don't see it immediately. The water damage shows up on the other side of the house, days later. By then, you have no idea where the leak started. That's why we need tools—like water meters that alert you immediately when something's wrong.
+
+\subsection{Simple Leak Tracker}
+
+This is a custom malloc/free wrapper that tracks every allocation. At program exit, report what wasn't freed. Simple, effective, and catches leaks immediately.
+
+It's like a sign-in/sign-out sheet at a library. Every time you borrow a book (malloc), you sign your name. When you return it (free), you cross your name off. At closing time, if any names are still on the list, those books weren't returned—that's a leak. The librarian (this tool) can tell you exactly who forgot to return what.
+
+\begin{lstlisting}
+#ifdef DEBUG_MEMORY
+
+#include <stdio.h>
+
+typedef struct MemEntry {
+    void* ptr;
+    size_t size;
+    const char* file;
+    int line;
+    struct MemEntry* next;
+} MemEntry;
+
+static MemEntry* mem_list = NULL;
+static size_t total_allocated = 0;
+static size_t total_freed = 0;
+
+void* debug_malloc(size_t size, const char* file, int line) {
+    void* ptr = malloc(size);
+    if (ptr) {
+        MemEntry* entry = malloc(sizeof(MemEntry));
+        if (entry) {
+            entry->ptr = ptr;
+            entry->size = size;
+            entry->file = file;
+            entry->line = line;
+            entry->next = mem_list;
+            mem_list = entry;
+            total_allocated += size;
+        }
+    }
+    return ptr;
+}
+
+void debug_free(void* ptr) {
+    if (!ptr) return;
+
+    MemEntry** entry = &mem_list;
+    while (*entry) {
+        if ((*entry)->ptr == ptr) {
+            MemEntry* to_free = *entry;
+            *entry = (*entry)->next;
+            total_freed += to_free->size;
+            free(to_free);
+            free(ptr);
+            return;
+        }
+        entry = &(*entry)->next;
+    }
+
+    // Not in our tracking list - either:
+    // 1. Freeing something we didn't allocate (bug!)
+    // 2. Freeing something twice (already removed from list)
+    // 3. Freeing a pointer from another allocator
+    fprintf(stderr, "WARNING: freeing untracked pointer %p\n", ptr);
+    free(ptr);
+}
+
+void debug_report_leaks(void) {
+    int count = 0;
+    size_t leaked_bytes = 0;
+
+    for (MemEntry* e = mem_list; e; e = e->next) {
+        fprintf(stderr, "LEAK: %zu bytes at %s:%d (ptr=%p)\n",
+                e->size, e->file, e->line, e->ptr);
+        leaked_bytes += e->size;
+        count++;
+    }
+
+    if (count > 0) {
+        fprintf(stderr, "\nTotal: %d leaks, %zu bytes leaked\n",
+                count, leaked_bytes);
+        fprintf(stderr, "Allocated: %zu, Freed: %zu\n",
+                total_allocated, total_freed);
+    } else {
+        fprintf(stderr, "No memory leaks detected!\n");
+    }
+}
+
+// Macros to wrap malloc/free
+#define malloc(size) debug_malloc(size, __FILE__, __LINE__)
+#define free(ptr) debug_free(ptr)
+
+// At program exit:
+// atexit(debug_report_leaks);
+
+#endif
+\end{lstlisting}
+
+\subsection{Canary Values: Detecting Buffer Overruns}
+
+Canaries are values placed before and after allocations. If they're changed, something wrote past the buffer. This catches buffer overflows at free() time.
+
+The name "canary" comes from coal miners who brought canaries into mines. If toxic gas leaked, the canary died first, warning the miners. In programming, we put special values (canaries) at the edges of memory allocations. If your code writes past the buffer, it overwrites the canary. When you free the memory, we check if the canary is still alive. If it's dead (changed), we know there was a buffer overflow. The canary dies to warn you.
+
+\begin{lstlisting}
+// Add canary values around allocations to detect overwrites
+// Called "canary" like the canary in a coal mine - dies first to warn you
+#define CANARY 0xDEADBEEF
+
+typedef struct {
+    size_t canary_front;
+    size_t size;
+    char data[];
+} CanaryBlock;
+
+void* guarded_malloc(size_t size) {
+    size_t total_size = sizeof(CanaryBlock) + size + sizeof(size_t);
+    CanaryBlock* block = malloc(total_size);
+    if (!block) return NULL;
+
+    block->canary_front = CANARY;
+    block->size = size;
+
+    // Canary at end of allocation
+    size_t* canary_back = (size_t*)(block->data + size);
+    *canary_back = CANARY;
+
+    return block->data;
+}
+
+void guarded_free(void* ptr) {
+    if (!ptr) return;
+
+    CanaryBlock* block = (CanaryBlock*)((char*)ptr -
+                          offsetof(CanaryBlock, data));
+
+    // Check front canary
+    if (block->canary_front != CANARY) {
+        fprintf(stderr, "CORRUPTION: front canary destroyed at %p\n", ptr);
+        abort();
+    }
+
+    // Check back canary
+    size_t* canary_back = (size_t*)(block->data + block->size);
+    if (*canary_back != CANARY) {
+        fprintf(stderr, "CORRUPTION: back canary destroyed at %p\n", ptr);
+        fprintf(stderr, "Buffer overflow detected!\n");
+        abort();
+    }
+
+    free(block);
+}
+
+// Catches buffer overflows immediately
+// Used in debug builds
+\end{lstlisting}
+
+\section{Tools: Valgrind, AddressSanitizer, and Friends}
+
+Professional C developers use tools. Always. These tools catch bugs that code review, testing, and careful programming miss. Use them in every build, every test run. The cost is nothing compared to debugging production memory corruption.
+
+Think of these tools like spell-check or grammar-check for your writing. Sure, you could proofread manually, but why? The tool catches typos instantly that you'd miss. Same with memory tools—they catch bugs instantly that you'd spend hours debugging manually. Not using them is like refusing to use spell-check because "real writers don't need it." (Spoiler: real writers use spell-check.)
+
+\begin{lstlisting}
+// Use AddressSanitizer (ASan) - built into GCC/Clang
+// This is the single best tool for catching memory bugs
+// Compile with: gcc -fsanitize=address -g program.c
+
+// ASan detects:
+// - Buffer overflows
+// - Use-after-free
+// - Use-after-return
+// - Double-free
+// - Memory leaks
+
+// Example that ASan will catch:
+void asan_test(void) {
+    int* arr = malloc(10 * sizeof(int));
+    arr[10] = 42;  // Buffer overflow - ASan reports it immediately!
+    free(arr);
+    arr[0] = 0;    // Use-after-free - ASan catches this too!
+}
+
+// Valgrind - run without recompiling
+// valgrind --leak-check=full ./program
+
+// Electric Fence - catches errors at page boundaries
+// Link with: gcc program.c -lefence
+
+// Each tool has trade-offs:
+// ASan: Fast, requires recompilation, great for testing
+// Valgrind: Slow (10-50x), no recompilation, excellent for production bugs
+// Electric Fence: Very slow, catches specific overruns
+\end{lstlisting}
+
+\begin{notebox}
+In professional development: always run tests with AddressSanitizer enabled. Always. It catches bugs before they reach production. A 2x slowdown in tests is nothing compared to debugging a production memory corruption. (Voice of painful experience talking here.)
+\end{notebox}
+
+\section{The Slab Allocator: How the Linux Kernel Does It}
+
+The Linux kernel allocates millions of objects of the same size: inodes, dentries, task structs, etc. The slab allocator is optimized for this pattern. Pre-allocate "slabs" (pages) of objects, and hand them out as needed. When freed, they go back to the free list. Fast allocation (pop from free list), fast deallocation (push to free list), minimal fragmentation.
+
+Imagine an egg carton factory. Instead of making custom containers for each individual egg, you make standard 12-egg cartons. When someone needs to store eggs, you hand them a carton (allocation). When they're done, the carton goes back to the stack of empty cartons (free list), ready to be reused. Fast, efficient, no waste. That's a slab allocator: pre-made containers for same-sized objects. The Linux kernel uses this for kernel objects that get allocated and freed constantly—much faster than custom-sizing each allocation.
+
+\begin{lstlisting}
+// Simplified version of Linux slab allocator concept
+// Used for objects of the same size
+// Real kernel slab allocator is more complex (per-CPU caches, NUMA awareness)
+
+typedef struct SlabNode {
+    struct SlabNode* next;
+} SlabNode;
+
+typedef struct {
+    size_t object_size;
+    size_t objects_per_slab;
+    SlabNode* free_list;
+    void** slabs;
+    size_t num_slabs;
+    size_t slab_capacity;
+} SlabAllocator;
+
+SlabAllocator* slab_create(size_t object_size, size_t objects_per_slab) {
+    SlabAllocator* slab = malloc(sizeof(SlabAllocator));
+    if (!slab) return NULL;
+
+    slab->object_size = object_size;
+    slab->objects_per_slab = objects_per_slab;
+    slab->free_list = NULL;
+    slab->num_slabs = 0;
+    slab->slab_capacity = 16;
+    slab->slabs = malloc(sizeof(void*) * slab->slab_capacity);
+
+    return slab;
+}
+
+static int slab_add_slab(SlabAllocator* slab) {
+    size_t slab_size = slab->object_size * slab->objects_per_slab;
+    void* new_slab = malloc(slab_size);
+    if (!new_slab) return -1;
+
+    // Add to slab list
+    if (slab->num_slabs >= slab->slab_capacity) {
+        size_t new_cap = slab->slab_capacity * 2;
+        void** new_slabs = realloc(slab->slabs, sizeof(void*) * new_cap);
+        if (!new_slabs) {
+            free(new_slab);
+            return -1;
+        }
+        slab->slabs = new_slabs;
+        slab->slab_capacity = new_cap;
+    }
+
+    slab->slabs[slab->num_slabs++] = new_slab;
+
+    // Chain objects into free list
+    for (size_t i = 0; i < slab->objects_per_slab; i++) {
+        SlabNode* node = (SlabNode*)((char*)new_slab +
+                                     i * slab->object_size);
+        node->next = slab->free_list;
+        slab->free_list = node;
+    }
+
+    return 0;
+}
+
+void* slab_alloc(SlabAllocator* slab) {
+    if (!slab) return NULL;
+
+    if (!slab->free_list) {
+        if (slab_add_slab(slab) != 0) {
+            return NULL;
+        }
+    }
+
+    SlabNode* node = slab->free_list;
+    slab->free_list = node->next;
+    return node;
+}
+
+void slab_free(SlabAllocator* slab, void* ptr) {
+    if (!slab || !ptr) return;
+
+    SlabNode* node = (SlabNode*)ptr;
+    node->next = slab->free_list;
+    slab->free_list = node;
+}
+
+void slab_destroy(SlabAllocator* slab) {
+    if (!slab) return;
+
+    for (size_t i = 0; i < slab->num_slabs; i++) {
+        free(slab->slabs[i]);
+    }
+    free(slab->slabs);
+    free(slab);
+}
+
+// Perfect for same-sized objects: network packets, AST nodes, etc.
+// O(1) allocation and deallocation
+// Minimal fragmentation
+// Good cache locality
+\end{lstlisting}
+
+\section{Production Patterns: What the Pros Do}
+
+Here are patterns from production systems that run 24/7 and handle millions of requests. These aren't theoretical—they're battle-tested solutions to real problems.
+
+\begin{lstlisting}
+// Pattern 1: Per-subsystem allocators
+// Different parts of your program have different allocation patterns
+// Give each subsystem its own allocator, tuned to its pattern
+typedef struct {
+    Allocator* renderer_allocator;  // Separate allocator for graphics
+    Allocator* physics_allocator;   // Separate for physics
+    Allocator* audio_allocator;     // Separate for audio
+} GameEngine;
+
+// Why? Each subsystem has different allocation patterns
+// Renderer: lots of small temporary allocations
+// Physics: fixed-size objects (slab allocator)
+// Audio: streaming buffers (pool allocator)
+
+// Pattern 2: Allocation limits per subsystem
+// Prevent one runaway subsystem from eating all memory
+// This is how you survive pathological inputs
+typedef struct {
+    Allocator* allocator;
+    size_t max_bytes;
+    size_t current_bytes;
+} LimitedAllocator;
+
+void* limited_alloc(LimitedAllocator* la, size_t size) {
+    if (la->current_bytes + size > la->max_bytes) {
+        // Budget exceeded!
+        return NULL;
+    }
+
+    void* ptr = la->allocator->alloc(size, la->allocator->context);
+    if (ptr) {
+        la->current_bytes += size;
+    }
+    return ptr;
+}
+
+// Prevents one subsystem from eating all memory
+
+// Pattern 3: Fallback allocators
+// Try fast allocators first, fall back to slower ones
+// This is "graceful degradation" for memory allocation
+void* fallback_alloc(size_t size) {
+    void* ptr = fast_pool_alloc(size);
+    if (!ptr) {
+        ptr = slower_heap_alloc(size);  // Fallback
+    }
+    if (!ptr) {
+        ptr = emergency_reserve_alloc(size);  // Last resort
+    }
+    return ptr;
+}
+
+// Pattern 4: Allocation budgets
+// Game engines: allocate no more than X per frame
+// Web servers: allocate no more than Y per request
+// This prevents memory growth over time ("memory leak by a thousand cuts")
+#define FRAME_MEMORY_BUDGET (16 * 1024 * 1024)  // 16MB per frame
+
+void render_frame(void) {
+    Arena* frame_arena = arena_create_sized(FRAME_MEMORY_BUDGET);
+
+    // All frame allocations from arena
+    // At end of frame, destroy arena
+    // Prevents memory growth over time
+
+    arena_destroy(frame_arena);
+}
+\end{lstlisting}
+
+\section{Common Memory Bugs and How to Avoid Them}
+
+\begin{lstlisting}
+// Bug 1: Use-after-free
+void use_after_free_bug(void) {
+    int* ptr = malloc(sizeof(int));
+    *ptr = 42;
+    free(ptr);
+    *ptr = 0;  // BUG! Accessing freed memory
+}
+// Fix: Set pointer to NULL after free
+void use_after_free_fix(void) {
+    int* ptr = malloc(sizeof(int));
+    *ptr = 42;
+    free(ptr);
+    ptr = NULL;  // Now any access will crash (which is better!)
+}
+
+// Bug 2: Double-free
+void double_free_bug(void) {
+    int* ptr = malloc(sizeof(int));
+    free(ptr);
+    free(ptr);  // BUG! Undefined behavior, often crashes
+}
+// Fix: Same as above - set to NULL
+
+// Bug 3: Memory leak
+void memory_leak_bug(void) {
+    for (int i = 0; i < 1000000; i++) {
+        int* ptr = malloc(sizeof(int));
+        // Never freed - leaks 4MB
+    }
+}
+// Fix: Free what you allocate
+
+// Bug 4: Dangling pointer
+int* dangling_pointer_bug(void) {
+    int x = 42;
+    return &x;  // BUG! Returns address of stack variable
+}
+// Fix: Allocate on heap or use static storage
+
+// Bug 5: Uninitialized memory
+void uninitialized_bug(void) {
+    int* arr = malloc(10 * sizeof(int));
+    printf("%d\n", arr[0]);  // BUG! Reading garbage
+}
+// Fix: Use calloc() or memset()
+
+// Bug 6: Buffer overflow
+void overflow_bug(void) {
+    char* buf = malloc(10);
+    strcpy(buf, "This is way too long");  // BUG! Writes past buffer
+}
+// Fix: Use strncpy(), check lengths
+\end{lstlisting}
+
+\section{Summary: Memory Management Wisdom}
+
+Professional memory management isn't about malloc() and free(). It's about:
+
+\begin{itemize}
+    \item \textbf{Clear ownership}: Document who allocates, who frees
+    \item \textbf{Allocator strategies}: Pools, arenas, slabs for different patterns
+    \item \textbf{RAII patterns}: Automatic cleanup with GCC extensions
+    \item \textbf{Reference counting}: For shared ownership
+    \item \textbf{Custom allocators}: Control strategy at runtime
+    \item \textbf{Debugging tools}: ASan, Valgrind, leak trackers
+    \item \textbf{Production patterns}: Per-subsystem allocators, budgets, fallbacks
+\end{itemize}
+
+\begin{warningbox}
+Memory bugs are subtle, non-deterministic, and hard to debug. They manifest far from their cause. They corrupt data silently. Use every tool available: static analyzers, dynamic analyzers, custom allocators, clear ownership semantics. Defense in depth is the only way to survive. (And yes, that's the voice of someone who's spent many 3 AM sessions debugging memory corruption in production.)
+\end{warningbox}
+
+\begin{tipbox}
+The best memory management strategy is the one that never gives you a chance to make mistakes. Use RAII where possible. Use arenas for temporary allocations. Use reference counting for shared resources. Make it impossible to leak memory, and you won't. (Well, mostly. We're still writing C, after all.)
+\end{tipbox}

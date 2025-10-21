@@ -1,0 +1,2277 @@
+\chapter{Platform-Specific Code: The Complete Cross-Platform Survival Guide}
+
+\section{Introduction: The Portability Nightmare and How to Tame It}
+
+Writing portable C code isn't just about using \texttt{\#ifdef}---it's about understanding fundamental differences between Windows, Linux, macOS, and hybrid environments like MSYS2/MinGW/Cygwin. This chapter covers \textbf{everything} real projects like cURL, FFmpeg, Git, CMake, Python, and libuv deal with to compile and run everywhere.
+
+\subsection{Why This Chapter Exists}
+
+If you've ever tried to compile a Linux program on Windows, or vice versa, you've discovered a harsh truth: \textbf{C is not automatically portable}. The language itself is standardized, but real programs need to:
+
+\begin{itemize}
+    \item Open files and directories
+    \item Create network connections
+    \item Spawn processes
+    \item Handle keyboard interrupts
+    \item Display colored terminal output
+    \item Load plugins dynamically
+    \item Measure time accurately
+\end{itemize}
+
+None of these have a standard C solution that works everywhere. Each requires platform-specific code.
+
+\subsection{What You'll Learn}
+
+This chapter teaches you to write C code that actually works across platforms by:
+
+\begin{enumerate}
+    \item \textbf{Understanding the platforms}: Windows is not Unix with a GUI. We'll explain the fundamental architectural differences.
+
+    \item \textbf{Detecting your environment correctly}: Not all Windows builds are the same. MinGW, MSYS2, Cygwin, and MSVC all behave differently.
+
+    \item \textbf{Abstracting platform differences}: Learn to create thin wrapper layers that hide platform-specific APIs behind clean, uniform interfaces.
+
+    \item \textbf{Avoiding common pitfalls}: We'll show you the gotchas that bite everyone (like forgetting \texttt{WSAStartup()} on Windows).
+
+    \item \textbf{Testing properly}: Your code compiling on Linux doesn't mean it works on Windows, even if you used \texttt{\#ifdef}.
+\end{enumerate}
+
+\begin{warningbox}
+\textbf{Reality Check:} True portability is hard. Major projects have 30-50\% of their code dedicated to platform abstraction. This isn't a flaw---it's necessity. The good news? Most of that code follows established patterns you can learn.
+\end{warningbox}
+
+\subsection{Chapter Roadmap}
+
+We'll systematically cover every major platform difference:
+
+\begin{itemize}
+    \item \textbf{Platform Detection}: How to reliably identify your OS, compiler, and build environment (including MSYS2/Cygwin traps)
+
+    \item \textbf{Networking}: Winsock vs BSD sockets---they look similar but are fundamentally different. We'll show you how to write code that works with both.
+
+    \item \textbf{Console/Terminal}: Colors, raw mode, Unicode output---all different across platforms.
+
+    \item \textbf{Character Encoding}: Windows uses UTF-16, everyone else uses UTF-8. This affects everything.
+
+    \item \textbf{File System}: Path separators, case sensitivity, length limits, and permissions all vary.
+
+    \item \textbf{Process Management}: \texttt{fork()} doesn't exist on Windows. Learn the portable alternatives.
+
+    \item \textbf{Line Endings}: CRLF vs LF matters more than you think, especially in binary protocols.
+
+    \item \textbf{Dynamic Libraries}: .dll vs .so vs .dylib---different extensions, different APIs, different calling conventions.
+
+    \item \textbf{Signals and Events}: Unix signals vs Windows console events---completely different models.
+
+    \item \textbf{Time Functions}: \texttt{sleep()}, \texttt{Sleep()}, \texttt{nanosleep()}---which to use when?
+
+    \item \textbf{Environment Variables}: Even this simple thing has platform quirks.
+\end{itemize}
+
+By the end of this chapter, you'll understand why projects like SQLite, cURL, and Git have dedicated platform abstraction layers---and you'll know how to build your own.
+
+\begin{tipbox}
+\textbf{Pro Tip:} Don't try to memorize everything here. Use this chapter as a reference. When you encounter a platform-specific problem, come back and find the relevant section. Over time, these patterns will become second nature.
+\end{tipbox}
+
+\section{Platform and Environment Detection: The Complete Matrix}
+
+\subsection{Understanding the Windows Build Environments}
+
+Before we detect anything, you need to understand what you're dealing with. This is crucial because many developers assume "Windows" is one thing, when it's actually four completely different C development environments:
+
+\begin{lstlisting}
+// Windows has FOUR different C development environments:
+//
+// 1. Native Windows (MSVC / Visual Studio):
+//    - Microsoft's compiler (cl.exe)
+//    - Windows API exclusively
+//    - wchar_t for Unicode (UTF-16)
+//    - Winsock2 for networking
+//    - Windows threads (CreateThread)
+//    - Example: Most commercial Windows software
+//
+// 2. MinGW (Minimalist GNU for Windows):
+//    - GCC compiler targeting native Windows
+//    - Windows API (CreateFile, etc.)
+//    - Some POSIX wrappers (open() wraps CreateFile)
+//    - Winsock2 for networking
+//    - Can mix Windows and limited POSIX
+//    - Example: GCC-compiled Windows executables
+//
+// 3. MSYS2:
+//    - Build environment with Unix tools
+//    - Uses MinGW-w64 compiler
+//    - Programs still use Windows API at runtime
+//    - Bash shell for building
+//    - Example: Building Unix projects on Windows
+//
+// 4. Cygwin:
+//    - Full POSIX compatibility layer
+//    - cygwin1.dll translates POSIX to Windows
+//    - BSD sockets (not Winsock)
+//    - fork() works!
+//    - Programs depend on cygwin1.dll
+//    - Example: Running Unix programs on Windows
+//
+// Key insight: MSYS2 is a BUILD environment.
+// Your program still runs as native Windows!
+\end{lstlisting}
+
+\subsection{Comprehensive Platform Detection}
+
+\begin{lstlisting}
+// platform.h - Industrial-strength platform detection
+#ifndef PLATFORM_H
+#define PLATFORM_H
+
+/* ===== STEP 1: Compiler Detection (FIRST!) ===== */
+
+#if defined(_MSC_VER)
+    #define COMPILER_MSVC
+    #define COMPILER_VERSION _MSC_VER
+    #define COMPILER_NAME "MSVC"
+
+    // MSVC implies native Windows
+    #define PLATFORM_WINDOWS
+    #define NATIVE_WINDOWS
+
+#elif defined(__MINGW32__) || defined(__MINGW64__)
+    #define COMPILER_MINGW
+    #define COMPILER_NAME "MinGW"
+    #define PLATFORM_WINDOWS
+    #define MINGW_WINDOWS
+
+    #ifdef __MINGW64__
+        #define MINGW64
+    #else
+        #define MINGW32
+    #endif
+
+    // MinGW can be detected as GCC too
+    #if defined(__GNUC__)
+        #define COMPILER_GCC_COMPATIBLE
+    #endif
+
+#elif defined(__CYGWIN__)
+    #define COMPILER_GCC
+    #define COMPILER_NAME "GCC (Cygwin)"
+    #define PLATFORM_CYGWIN
+    #define POSIX_ON_WINDOWS
+
+    // Cygwin is POSIX-like despite being on Windows
+    #define HAVE_POSIX
+
+#elif defined(__clang__)
+    #define COMPILER_CLANG
+    #define COMPILER_NAME "Clang"
+    #define COMPILER_VERSION \
+        (__clang_major__ * 10000 + __clang_minor__ * 100 + __clang_patchlevel__)
+    #define COMPILER_GCC_COMPATIBLE
+
+#elif defined(__GNUC__)
+    #define COMPILER_GCC
+    #define COMPILER_NAME "GCC"
+    #define COMPILER_VERSION \
+        (__GNUC__ * 10000 + __GNUC_MINOR__ * 100 + __GNUC_PATCHLEVEL__)
+    #define COMPILER_GCC_COMPATIBLE
+
+#elif defined(__INTEL_COMPILER) || defined(__ICC)
+    #define COMPILER_INTEL
+    #define COMPILER_NAME "Intel C"
+
+#elif defined(__PGI)
+    #define COMPILER_PGI
+    #define COMPILER_NAME "PGI"
+
+#else
+    #define COMPILER_UNKNOWN
+    #define COMPILER_NAME "Unknown"
+#endif
+
+/* ===== STEP 2: Operating System Detection ===== */
+
+#ifndef PLATFORM_WINDOWS
+    #if defined(_WIN32) || defined(_WIN64) || defined(__WIN32__) || \
+        defined(__TOS_WIN__) || defined(__WINDOWS__)
+        #define PLATFORM_WINDOWS
+        #define NATIVE_WINDOWS
+    #endif
+#endif
+
+#if defined(__APPLE__) && defined(__MACH__)
+    #include <TargetConditionals.h>
+    #define PLATFORM_APPLE
+    #define PLATFORM_BSD_LIKE
+
+    #if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
+        #define PLATFORM_IOS
+    #elif TARGET_OS_MAC
+        #define PLATFORM_MACOS
+        #define PLATFORM_MACOS_DESKTOP
+    #elif TARGET_OS_TV
+        #define PLATFORM_TVOS
+    #elif TARGET_OS_WATCH
+        #define PLATFORM_WATCHOS
+    #endif
+
+#elif defined(__linux__)
+    #define PLATFORM_LINUX
+    #define PLATFORM_UNIX_LIKE
+
+    #ifdef __ANDROID__
+        #define PLATFORM_ANDROID
+    #endif
+
+    // Detect Linux distributions (best effort)
+    #if defined(__GLIBC__)
+        #define LIBC_GLIBC
+    #elif defined(__MUSL__)
+        #define LIBC_MUSL
+    #elif defined(__UCLIBC__)
+        #define LIBC_UCLIBC
+    #endif
+
+#elif defined(__FreeBSD__)
+    #define PLATFORM_FREEBSD
+    #define PLATFORM_BSD_LIKE
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(__OpenBSD__)
+    #define PLATFORM_OPENBSD
+    #define PLATFORM_BSD_LIKE
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(__NetBSD__)
+    #define PLATFORM_NETBSD
+    #define PLATFORM_BSD_LIKE
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(__DragonFly__)
+    #define PLATFORM_DRAGONFLY
+    #define PLATFORM_BSD_LIKE
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(__unix__) || defined(__unix)
+    #define PLATFORM_UNIX
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(__sun)
+    #if defined(__SVR4) || defined(__svr4__)
+        #define PLATFORM_SOLARIS
+    #else
+        #define PLATFORM_SUNOS
+    #endif
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(__hpux) || defined(_hpux)
+    #define PLATFORM_HPUX
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(_AIX)
+    #define PLATFORM_AIX
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(__QNX__) || defined(__QNXNTO__)
+    #define PLATFORM_QNX
+    #define PLATFORM_UNIX_LIKE
+
+#elif defined(__HAIKU__)
+    #define PLATFORM_HAIKU
+    #define PLATFORM_UNIX_LIKE
+
+#else
+    #define PLATFORM_UNKNOWN
+#endif
+
+/* ===== STEP 3: POSIX Feature Detection ===== */
+
+#if defined(PLATFORM_LINUX) || defined(PLATFORM_BSD_LIKE) || \
+    defined(PLATFORM_CYGWIN) || defined(PLATFORM_MACOS) || \
+    defined(PLATFORM_UNIX_LIKE)
+    #define HAVE_POSIX
+#endif
+
+/* ===== STEP 4: Architecture Detection ===== */
+
+#if defined(__x86_64__) || defined(_M_X64) || defined(__amd64__)
+    #define ARCH_X86_64
+    #define ARCH_64BIT
+    #define ARCH_NAME "x86_64"
+
+#elif defined(__i386__) || defined(_M_IX86) || defined(__i386) || \
+      defined(__i486__) || defined(__i586__) || defined(__i686__)
+    #define ARCH_X86
+    #define ARCH_32BIT
+    #define ARCH_NAME "x86"
+
+#elif defined(__aarch64__) || defined(_M_ARM64) || defined(__arm64__)
+    #define ARCH_ARM64
+    #define ARCH_64BIT
+    #define ARCH_NAME "arm64"
+
+#elif defined(__arm__) || defined(_M_ARM) || defined(__arm)
+    #define ARCH_ARM
+    #define ARCH_32BIT
+    #define ARCH_NAME "arm"
+
+#elif defined(__riscv)
+    #if __riscv_xlen == 64
+        #define ARCH_RISCV64
+        #define ARCH_64BIT
+        #define ARCH_NAME "riscv64"
+    #else
+        #define ARCH_RISCV32
+        #define ARCH_32BIT
+        #define ARCH_NAME "riscv32"
+    #endif
+
+#elif defined(__powerpc64__) || defined(__ppc64__) || defined(__PPC64__)
+    #define ARCH_PPC64
+    #define ARCH_64BIT
+    #define ARCH_NAME "ppc64"
+
+#elif defined(__powerpc__) || defined(__ppc__) || defined(__PPC__)
+    #define ARCH_PPC
+    #define ARCH_32BIT
+    #define ARCH_NAME "ppc"
+
+#elif defined(__mips64)
+    #define ARCH_MIPS64
+    #define ARCH_64BIT
+    #define ARCH_NAME "mips64"
+
+#elif defined(__mips__)
+    #define ARCH_MIPS
+    #define ARCH_32BIT
+    #define ARCH_NAME "mips"
+
+#elif defined(__s390x__)
+    #define ARCH_S390X
+    #define ARCH_64BIT
+    #define ARCH_NAME "s390x"
+
+#elif defined(__sparc64__)
+    #define ARCH_SPARC64
+    #define ARCH_64BIT
+    #define ARCH_NAME "sparc64"
+
+#elif defined(__sparc__)
+    #define ARCH_SPARC
+    #define ARCH_32BIT
+    #define ARCH_NAME "sparc"
+
+#elif defined(__ia64__) || defined(_M_IA64)
+    #define ARCH_IA64
+    #define ARCH_64BIT
+    #define ARCH_NAME "ia64"
+
+#else
+    #define ARCH_UNKNOWN
+    #define ARCH_NAME "unknown"
+#endif
+
+/* ===== STEP 5: Pointer Size and Data Model ===== */
+
+#if defined(_WIN64) || defined(__LP64__) || defined(_LP64) || \
+    defined(__x86_64__) || defined(__aarch64__)
+    #define PLATFORM_64BIT
+    typedef unsigned long long uintptr_sized_t;
+#else
+    #define PLATFORM_32BIT
+    typedef unsigned int uintptr_sized_t;
+#endif
+
+/* ===== STEP 6: Endianness Detection ===== */
+
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && \
+    __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+    #define PLATFORM_LITTLE_ENDIAN
+#elif defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && \
+      __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    #define PLATFORM_BIG_ENDIAN
+#elif defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || \
+      defined(_M_X64)
+    // x86 is always little-endian
+    #define PLATFORM_LITTLE_ENDIAN
+#elif defined(__ARMEB__)
+    #define PLATFORM_BIG_ENDIAN
+#elif defined(__ARMEL__)
+    #define PLATFORM_LITTLE_ENDIAN
+#else
+    // Runtime detection needed
+    #define PLATFORM_ENDIAN_UNKNOWN
+#endif
+
+/* ===== STEP 7: API Selection ===== */
+
+#if defined(PLATFORM_WINDOWS) && !defined(PLATFORM_CYGWIN)
+    #define USE_WINDOWS_API
+    #define USE_WINSOCK
+#else
+    #define USE_POSIX_API
+    #define USE_BSD_SOCKETS
+#endif
+
+#endif // PLATFORM_H
+\end{lstlisting}
+
+\begin{notebox}
+\textbf{Why so complex?} Because \texttt{\#ifdef \_WIN32} isn't enough! Cygwin defines \texttt{\_WIN32} but doesn't use Windows APIs. MinGW uses Windows APIs but with GCC. MSVC has different intrinsics than GCC. Real portability requires understanding all these nuances.
+
+\textbf{How to use this:} Include this header in your project, then use the defined macros throughout your code. For example:
+\begin{itemize}
+    \item Use \texttt{PLATFORM\_WINDOWS} to detect any Windows build
+    \item Use \texttt{NATIVE\_WINDOWS} to detect native Windows (not Cygwin)
+    \item Use \texttt{HAVE\_POSIX} to check for POSIX API availability
+    \item Use \texttt{COMPILER\_MSVC} for MSVC-specific code
+\end{itemize}
+
+This approach scales much better than scattered \texttt{\#ifdef} checks throughout your codebase.
+\end{notebox}
+
+
+\section{Networking: The Winsock vs BSD Sockets Nightmare}
+
+\subsection{Why Networking is Different on Windows}
+
+The socket API on Unix (BSD sockets) and Windows (Winsock) look similar but have critical differences that will break your code if you're not careful. Here's what makes Windows networking special:
+
+\begin{enumerate}
+    \item \textbf{Initialization Required}: On Windows, you MUST call \texttt{WSAStartup()} before using any socket functions. Forget this, and all socket operations silently fail or return cryptic errors.
+
+    \item \textbf{Different Types}: Unix uses \texttt{int} for socket descriptors. Windows uses \texttt{SOCKET}, which is an unsigned type. This matters for error checking.
+
+    \item \textbf{Different Error Codes}: Unix sets \texttt{errno}. Windows requires \texttt{WSAGetLastError()}. They're not compatible.
+
+    \item \textbf{Cleanup Required}: Windows requires \texttt{WSACleanup()} when done. Unix doesn't need this.
+
+    \item \textbf{Different Close Function}: Unix uses \texttt{close()}. Windows uses \texttt{closesocket()}. Using the wrong one fails.
+
+    \item \textbf{Blocking Behavior}: Setting non-blocking mode uses different functions and flags on each platform.
+\end{enumerate}
+
+The good news? With proper abstractions, you can write networking code once and have it work everywhere. Let's build those abstractions.
+
+Windows doesn't use BSD sockets directly—it uses Winsock, which is \textit{inspired by} BSD sockets but has critical differences:
+
+
+\subsection{The Problem in Detail}
+
+Here's what happens if you naively write cross-platform socket code:
+
+\begin{lstlisting}
+// Key differences:
+//
+// 1. Initialization: Windows requires WSAStartup()
+// 2. Cleanup: Windows requires WSACleanup()
+// 3. Socket type: Windows uses SOCKET (unsigned), Unix uses int
+// 4. Invalid socket: Windows uses INVALID_SOCKET, Unix uses -1
+// 5. Error codes: Windows uses WSAGetLastError(), Unix uses errno
+// 6. Error constants: WSAEWOULDBLOCK vs EWOULDBLOCK
+// 7. Close function: Windows uses closesocket(), Unix uses close()
+// 8. ioctl: Windows uses ioctlsocket(), Unix uses ioctl() or fcntl()
+// 9. socklen_t: Windows uses int, POSIX uses socklen_t
+// 10. poll: Windows has WSAPoll, Unix has poll (different bugs!)
+\end{lstlisting}
+
+\subsection{Socket Initialization}
+
+\begin{lstlisting}
+// sockets.h - Portable socket initialization
+#ifndef SOCKETS_H
+#define SOCKETS_H
+
+#ifdef USE_WINSOCK
+    // Windows networking
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+
+    // Need to link: -lws2_32
+    #pragma comment(lib, "ws2_32.lib")
+
+    typedef SOCKET socket_t;
+    #define INVALID_SOCKET_FD INVALID_SOCKET
+    #define SOCKET_ERROR_CODE WSAGetLastError()
+
+    // Error code compatibility
+    #define EWOULDBLOCK_COMPAT WSAEWOULDBLOCK
+    #define EINPROGRESS_COMPAT WSAEINPROGRESS
+    #define ECONNREFUSED_COMPAT WSAECONNREFUSED
+    #define ETIMEDOUT_COMPAT WSAETIMEDOUT
+    #define EADDRINUSE_COMPAT WSAEADDRINUSE
+
+#else
+    // Unix/POSIX networking
+    #include <sys/socket.h>
+    #include <sys/types.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <arpa/inet.h>
+    #include <netdb.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+    #include <errno.h>
+
+    typedef int socket_t;
+    #define INVALID_SOCKET_FD (-1)
+    #define SOCKET_ERROR (-1)
+    #define SOCKET_ERROR_CODE errno
+
+    // Error codes are directly from errno
+    #define EWOULDBLOCK_COMPAT EWOULDBLOCK
+    #define EINPROGRESS_COMPAT EINPROGRESS
+    #define ECONNREFUSED_COMPAT ECONNREFUSED
+    #define ETIMEDOUT_COMPAT ETIMEDOUT
+    #define EADDRINUSE_COMPAT EADDRINUSE
+#endif
+
+// Initialize networking subsystem
+static inline int net_init(void) {
+#ifdef USE_WINSOCK
+    WSADATA wsa_data;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    if (result != 0) {
+        return -1;
+    }
+
+    // Verify Winsock 2.2 is available
+    if (LOBYTE(wsa_data.wVersion) != 2 ||
+        HIBYTE(wsa_data.wVersion) != 2) {
+        WSACleanup();
+        return -1;
+    }
+    return 0;
+#else
+    // Unix doesn't need initialization
+    return 0;
+#endif
+}
+
+// Cleanup networking subsystem
+static inline void net_cleanup(void) {
+#ifdef USE_WINSOCK
+    WSACleanup();
+#endif
+}
+
+// Close a socket
+static inline int net_close(socket_t sock) {
+#ifdef USE_WINSOCK
+    return closesocket(sock);
+#else
+    return close(sock);
+#endif
+}
+
+// Set socket to non-blocking mode
+static inline int net_set_nonblocking(socket_t sock) {
+#ifdef USE_WINSOCK
+    u_long mode = 1;
+    return ioctlsocket(sock, FIONBIO, &mode);
+#else
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags == -1) return -1;
+    return fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+#endif
+}
+
+// Set socket to blocking mode
+static inline int net_set_blocking(socket_t sock) {
+#ifdef USE_WINSOCK
+    u_long mode = 0;
+    return ioctlsocket(sock, FIONBIO, &mode);
+#else
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags == -1) return -1;
+    return fcntl(sock, F_SETFL, flags & ~O_NONBLOCK);
+#endif
+}
+
+// Check if error is "would block"
+static inline int net_would_block(void) {
+    int err = SOCKET_ERROR_CODE;
+#ifdef USE_WINSOCK
+    return err == WSAEWOULDBLOCK || err == WSAEINPROGRESS;
+#else
+    return err == EWOULDBLOCK || err == EAGAIN || err == EINPROGRESS;
+#endif
+}
+
+// Portable socket options
+static inline int net_set_reuseaddr(socket_t sock, int enable) {
+#ifdef USE_WINSOCK
+    BOOL opt = enable ? TRUE : FALSE;
+    return setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                     (const char*)&opt, sizeof(opt));
+#else
+    int opt = enable ? 1 : 0;
+    return setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+                     &opt, sizeof(opt));
+#endif
+}
+
+static inline int net_set_nodelay(socket_t sock, int enable) {
+#ifdef USE_WINSOCK
+    BOOL opt = enable ? TRUE : FALSE;
+    return setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
+                     (const char*)&opt, sizeof(opt));
+#else
+    int opt = enable ? 1 : 0;
+    return setsockopt(sock, IPPROTO_TCP, TCP_NODELAY,
+                     &opt, sizeof(opt));
+#endif
+}
+
+static inline int net_set_keepalive(socket_t sock, int enable) {
+#ifdef USE_WINSOCK
+    BOOL opt = enable ? TRUE : FALSE;
+    return setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE,
+                     (const char*)&opt, sizeof(opt));
+#else
+    int opt = enable ? 1 : 0;
+    return setsockopt(sock, SOL_SOCKET, SO_KEEPALIVE,
+                     &opt, sizeof(opt));
+#endif
+}
+
+// Get last socket error as string
+static inline const char* net_strerror(int err) {
+#ifdef USE_WINSOCK
+    static char buf[256];
+    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM |
+                  FORMAT_MESSAGE_IGNORE_INSERTS,
+                  NULL, err, 0, buf, sizeof(buf), NULL);
+    return buf;
+#else
+    return strerror(err);
+#endif
+}
+
+#endif // SOCKETS_H
+\end{lstlisting}
+
+\subsection{Complete Socket Example}
+
+\begin{lstlisting}
+#include "sockets.h"
+#include <stdio.h>
+#include <string.h>
+
+int main(void) {
+    // Initialize network subsystem
+    if (net_init() != 0) {
+        fprintf(stderr, "Failed to initialize networking\n");
+        return 1;
+    }
+
+    // Create socket (same on all platforms)
+    socket_t sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET_FD) {
+        fprintf(stderr, "socket() failed: %s\n",
+                net_strerror(SOCKET_ERROR_CODE));
+        net_cleanup();
+        return 1;
+    }
+
+    // Enable address reuse
+    net_set_reuseaddr(sock, 1);
+
+    // Bind to port 8080
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(8080);
+
+    if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        fprintf(stderr, "bind() failed: %s\n",
+                net_strerror(SOCKET_ERROR_CODE));
+        net_close(sock);
+        net_cleanup();
+        return 1;
+    }
+
+    // Listen
+    if (listen(sock, 5) == SOCKET_ERROR) {
+        fprintf(stderr, "listen() failed: %s\n",
+                net_strerror(SOCKET_ERROR_CODE));
+        net_close(sock);
+        net_cleanup();
+        return 1;
+    }
+
+    printf("Listening on port 8080...\n");
+
+    // Accept connection
+    socket_t client = accept(sock, NULL, NULL);
+    if (client == INVALID_SOCKET_FD) {
+        fprintf(stderr, "accept() failed: %s\n",
+                net_strerror(SOCKET_ERROR_CODE));
+    } else {
+        printf("Client connected!\n");
+        const char* msg = "Hello from portable C!\n";
+        send(client, msg, (int)strlen(msg), 0);
+        net_close(client);
+    }
+
+    // Cleanup
+    net_close(sock);
+    net_cleanup();
+    return 0;
+}
+\end{lstlisting}
+
+\begin{warningbox}
+\textbf{MinGW Gotcha:} MinGW provides some POSIX functions like \texttt{read()} and \texttt{write()}, but they DON'T work on sockets! You must use \texttt{send()} and \texttt{recv()}. Cygwin doesn't have this problem.
+\end{warningbox}
+
+\section{Console and Terminal Handling}
+
+Unix terminals and Windows consoles have completely different APIs for:
+\begin{itemize}
+    \item \textbf{Color output}: ANSI escape codes vs Windows Console API
+    \item \textbf{Raw mode}: \texttt{termios} vs \texttt{SetConsoleMode()}
+    \item \textbf{Size detection}: \texttt{ioctl()} vs \texttt{GetConsoleScreenBufferInfo()}
+    \item \textbf{Unicode}: UTF-8 vs UTF-16 (again!)
+\end{itemize}
+
+Let's make it portable.
+
+\subsection{Terminal Colors and Formatting}
+
+\begin{lstlisting}
+// console.h - Portable console output with colors
+#ifndef CONSOLE_H
+#define CONSOLE_H
+
+#include <stdio.h>
+
+#ifdef PLATFORM_WINDOWS
+    #include <windows.h>
+    #include <io.h>
+    #define isatty _isatty
+    #define fileno _fileno
+#else
+    #include <unistd.h>
+#endif
+
+// ANSI color codes
+#define ANSI_RESET   "\033[0m"
+#define ANSI_BOLD    "\033[1m"
+#define ANSI_RED     "\033[31m"
+#define ANSI_GREEN   "\033[32m"
+#define ANSI_YELLOW  "\033[33m"
+#define ANSI_BLUE    "\033[34m"
+#define ANSI_MAGENTA "\033[35m"
+#define ANSI_CYAN    "\033[36m"
+#define ANSI_WHITE   "\033[37m"
+
+static int console_color_enabled = -1;
+
+// Initialize console (enable colors on Windows 10+)
+static inline void console_init(void) {
+#ifdef PLATFORM_WINDOWS
+    // Windows 10 supports ANSI escape codes
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut != INVALID_HANDLE_VALUE) {
+        DWORD mode = 0;
+        if (GetConsoleMode(hOut, &mode)) {
+            mode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+            SetConsoleMode(hOut, mode);
+        }
+    }
+#endif
+
+    // Check if stdout is a terminal
+    console_color_enabled = isatty(fileno(stdout));
+}
+
+// Print with color (only if terminal supports it)
+static inline void console_print(const char* color, const char* text) {
+    if (console_color_enabled == -1) console_init();
+
+    if (console_color_enabled) {
+        printf("%s%s%s", color, text, ANSI_RESET);
+    } else {
+        printf("%s", text);
+    }
+}
+
+// Convenience functions
+#define print_error(msg)   console_print(ANSI_RED, msg)
+#define print_success(msg) console_print(ANSI_GREEN, msg)
+#define print_warning(msg) console_print(ANSI_YELLOW, msg)
+#define print_info(msg)    console_print(ANSI_CYAN, msg)
+
+// Clear screen
+static inline void console_clear(void) {
+#ifdef PLATFORM_WINDOWS
+    system("cls");
+#else
+    system("clear");
+    // Or: printf("\033[2J\033[H");
+#endif
+}
+
+// Get terminal size
+static inline int console_get_size(int* width, int* height) {
+#ifdef PLATFORM_WINDOWS
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
+        *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+        *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+        return 0;
+    }
+    return -1;
+#else
+    #include <sys/ioctl.h>
+    struct winsize w;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &w) == 0) {
+        *width = w.ws_col;
+        *height = w.ws_row;
+        return 0;
+    }
+    return -1;
+#endif
+}
+
+#endif // CONSOLE_H
+\end{lstlisting}
+
+\subsection{Raw Terminal Mode (No Echo, No Buffering)}
+
+\begin{lstlisting}
+// terminal.h - Raw terminal input
+#ifndef TERMINAL_H
+#define TERMINAL_H
+
+#ifdef PLATFORM_WINDOWS
+    #include <windows.h>
+    #include <conio.h>
+
+    static DWORD original_mode = 0;
+
+    static inline int terminal_raw_mode_enable(void) {
+        HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+        if (hIn == INVALID_HANDLE_VALUE) return -1;
+
+        if (!GetConsoleMode(hIn, &original_mode)) return -1;
+
+        DWORD mode = original_mode;
+        mode &= ~(ENABLE_ECHO_INPUT | ENABLE_LINE_INPUT);
+        mode |= ENABLE_PROCESSED_INPUT;
+
+        if (!SetConsoleMode(hIn, mode)) return -1;
+        return 0;
+    }
+
+    static inline int terminal_raw_mode_disable(void) {
+        HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+        if (hIn == INVALID_HANDLE_VALUE) return -1;
+        return SetConsoleMode(hIn, original_mode) ? 0 : -1;
+    }
+
+    static inline int terminal_getchar_nonblock(void) {
+        if (_kbhit()) {
+            return _getch();
+        }
+        return -1;
+    }
+
+#else
+    #include <termios.h>
+    #include <unistd.h>
+    #include <fcntl.h>
+
+    static struct termios original_termios;
+    static int termios_saved = 0;
+
+    static inline int terminal_raw_mode_enable(void) {
+        if (tcgetattr(STDIN_FILENO, &original_termios) == -1) {
+            return -1;
+        }
+        termios_saved = 1;
+
+        struct termios raw = original_termios;
+        raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+        raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+        raw.c_cflag |= CS8;
+        raw.c_oflag &= ~(OPOST);
+        raw.c_cc[VMIN] = 0;
+        raw.c_cc[VTIME] = 1;
+
+        if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) == -1) {
+            return -1;
+        }
+        return 0;
+    }
+
+    static inline int terminal_raw_mode_disable(void) {
+        if (!termios_saved) return 0;
+        if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios) == -1) {
+            return -1;
+        }
+        return 0;
+    }
+
+    static inline int terminal_getchar_nonblock(void) {
+        int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+        fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+        char c;
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+
+        fcntl(STDIN_FILENO, F_SETFL, flags);
+
+        if (n == 1) return (unsigned char)c;
+        return -1;
+    }
+#endif
+
+// Get a single character with timeout
+static inline int terminal_getch_timeout(int timeout_ms) {
+#ifdef PLATFORM_WINDOWS
+    DWORD start = GetTickCount();
+    while (GetTickCount() - start < (DWORD)timeout_ms) {
+        if (_kbhit()) return _getch();
+        Sleep(10);
+    }
+    return -1;
+#else
+    fd_set readfds;
+    struct timeval tv;
+
+    FD_ZERO(&readfds);
+    FD_SET(STDIN_FILENO, &readfds);
+
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    if (select(STDIN_FILENO + 1, &readfds, NULL, NULL, &tv) > 0) {
+        char c;
+        if (read(STDIN_FILENO, &c, 1) == 1) {
+            return (unsigned char)c;
+        }
+    }
+    return -1;
+#endif
+}
+
+#endif // TERMINAL_H
+\end{lstlisting}
+
+\section{Character Encoding: UTF-8 vs UTF-16}
+
+\subsection{The Windows Unicode Problem}
+
+This is one of the most frustrating platform differences. Here's the situation:
+
+\begin{itemize}
+    \item \textbf{Unix/Linux/macOS}: Use UTF-8 everywhere. Strings are \texttt{char*}. Everything is simple.
+
+    \item \textbf{Windows}: The "ANSI" API (\texttt{CreateFileA}, \texttt{GetFileAttributesA}) uses the system codepage (often Windows-1252), which can't handle international characters reliably.
+
+    \item \textbf{Windows Unicode API}: Uses UTF-16 with \texttt{wchar\_t*} (\texttt{CreateFileW}, \texttt{GetFileAttributesW}). This is the only reliable way to handle Unicode on Windows.
+\end{itemize}
+
+The problem: Your portable code should use UTF-8 internally, but Windows APIs need UTF-16. Solution: Convert at the boundary.
+
+\begin{lstlisting}
+// Windows internally uses UTF-16 (wchar_t)
+// Unix uses UTF-8 (char)
+// This affects EVERY string API
+
+#ifdef PLATFORM_WINDOWS
+    // Windows: wmain for Unicode
+    #include <windows.h>
+    #include <wchar.h>
+
+    // Convert UTF-8 to UTF-16 (for Windows APIs)
+    wchar_t* utf8_to_utf16(const char* utf8) {
+        if (!utf8) return NULL;
+
+        int len = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+        if (len <= 0) return NULL;
+
+        wchar_t* utf16 = malloc(len * sizeof(wchar_t));
+        if (!utf16) return NULL;
+
+        MultiByteToWideChar(CP_UTF8, 0, utf8, -1, utf16, len);
+        return utf16;
+    }
+
+    // Convert UTF-16 to UTF-8
+    char* utf16_to_utf8(const wchar_t* utf16) {
+        if (!utf16) return NULL;
+
+        int len = WideCharToMultiByte(CP_UTF8, 0, utf16, -1,
+                                     NULL, 0, NULL, NULL);
+        if (len <= 0) return NULL;
+
+        char* utf8 = malloc(len);
+        if (!utf8) return NULL;
+
+        WideCharToMultiByte(CP_UTF8, 0, utf16, -1,
+                           utf8, len, NULL, NULL);
+        return utf8;
+    }
+
+    // Use wmain and convert arguments to UTF-8
+    int wmain(int argc, wchar_t* argv[]) {
+        // Convert all arguments to UTF-8
+        char** argv_utf8 = malloc(argc * sizeof(char*));
+        for (int i = 0; i < argc; i++) {
+            argv_utf8[i] = utf16_to_utf8(argv[i]);
+        }
+
+        // Call your real main
+        extern int utf8_main(int argc, char** argv);
+        int ret = utf8_main(argc, argv_utf8);
+
+        // Cleanup
+        for (int i = 0; i < argc; i++) {
+            free(argv_utf8[i]);
+        }
+        free(argv_utf8);
+        return ret;
+    }
+
+    // Your actual main function
+    int utf8_main(int argc, char** argv) {
+        // All strings are UTF-8 now!
+        printf("UTF-8 argument: %s\n", argv[0]);
+        return 0;
+    }
+
+#else
+    // Unix: already UTF-8
+    int main(int argc, char** argv) {
+        printf("UTF-8 argument: %s\n", argv[0]);
+        return 0;
+    }
+#endif
+\end{lstlisting}
+
+\begin{tipbox}
+\textbf{Pro Tip:} Always use UTF-8 internally in your program. Convert to UTF-16 only when calling Windows APIs. This makes your code portable and avoids wchar\_t madness.
+\end{tipbox}
+
+\section{File System Differences}
+
+File systems vary dramatically across platforms:
+
+\begin{itemize}
+    \item \textbf{Path separators}: Windows uses backslash (\texttt{\textbackslash}), Unix uses forward slash (\texttt{/})
+    \item \textbf{Case sensitivity}: Unix file systems are case-sensitive (\texttt{file.txt} $\neq$ \texttt{File.txt}). Windows usually isn't.
+    \item \textbf{Path length limits}: Windows has a notorious 260-character limit (MAX\_PATH). Unix typically allows 4096.
+    \item \textbf{Reserved names}: Windows forbids \texttt{CON}, \texttt{PRN}, \texttt{AUX}, \texttt{NUL}, etc. as filenames.
+    \item \textbf{Absolute paths}: Windows uses drive letters (\texttt{C:\textbackslash}). Unix uses root (\texttt{/}).
+    \item \textbf{Permissions}: Unix has \texttt{chmod}/\texttt{stat}. Windows has ACLs (Access Control Lists).
+\end{itemize}
+
+\subsection{Path Handling}
+
+Let's create a portable path manipulation library:
+
+\begin{lstlisting}
+// path.h - Portable path manipulation
+#ifndef PATH_H
+#define PATH_H
+
+#include <string.h>
+#include <stdlib.h>
+
+#ifdef PLATFORM_WINDOWS
+    #define PATH_SEPARATOR '\\'
+    #define PATH_SEPARATOR_STR "\\"
+    #define PATH_LIST_SEPARATOR ';'
+    #define IS_PATH_SEPARATOR(c) ((c) == '\\' || (c) == '/')
+    #define MAX_PATH_LEN 260  // Windows limitation
+#else
+    #define PATH_SEPARATOR '/'
+    #define PATH_SEPARATOR_STR "/"
+    #define PATH_LIST_SEPARATOR ':'
+    #define IS_PATH_SEPARATOR(c) ((c) == '/')
+    #define MAX_PATH_LEN 4096  // PATH_MAX on most Unix
+#endif
+
+// Normalize path separators
+static inline void path_normalize(char* path) {
+    if (!path) return;
+
+    for (char* p = path; *p; p++) {
+        if (IS_PATH_SEPARATOR(*p)) {
+            *p = PATH_SEPARATOR;
+        }
+    }
+
+#ifdef PLATFORM_WINDOWS
+    // Windows paths are case-insensitive
+    // Optional: convert to lowercase
+#endif
+}
+
+// Join two paths
+static inline char* path_join(const char* dir, const char* file) {
+    if (!dir || !file) return NULL;
+
+    size_t dir_len = strlen(dir);
+    size_t file_len = strlen(file);
+
+    // Check if dir already ends with separator
+    int need_sep = (dir_len > 0 && !IS_PATH_SEPARATOR(dir[dir_len - 1]));
+
+    size_t total_len = dir_len + file_len + (need_sep ? 1 : 0) + 1;
+    char* result = malloc(total_len);
+    if (!result) return NULL;
+
+    strcpy(result, dir);
+    if (need_sep) {
+        result[dir_len] = PATH_SEPARATOR;
+        result[dir_len + 1] = '\0';
+    }
+    strcat(result, file);
+
+    path_normalize(result);
+    return result;
+}
+
+// Get filename from path
+static inline const char* path_filename(const char* path) {
+    if (!path) return NULL;
+
+    const char* last_sep = strrchr(path, PATH_SEPARATOR);
+#ifdef PLATFORM_WINDOWS
+    // Windows accepts both / and \
+    const char* last_fwd = strrchr(path, '/');
+    if (last_fwd && (!last_sep || last_fwd > last_sep)) {
+        last_sep = last_fwd;
+    }
+#endif
+
+    return last_sep ? last_sep + 1 : path;
+}
+
+// Get directory from path (modifies path!)
+static inline char* path_dirname(char* path) {
+    if (!path || !*path) return ".";
+
+    char* last_sep = strrchr(path, PATH_SEPARATOR);
+#ifdef PLATFORM_WINDOWS
+    char* last_fwd = strrchr(path, '/');
+    if (last_fwd && (!last_sep || last_fwd > last_sep)) {
+        last_sep = last_fwd;
+    }
+#endif
+
+    if (!last_sep) return ".";
+
+    *last_sep = '\0';
+    return path;
+}
+
+// Check if path is absolute
+static inline int path_is_absolute(const char* path) {
+    if (!path || !*path) return 0;
+
+#ifdef PLATFORM_WINDOWS
+    // C:\ or \\server\share
+    if (path[1] == ':' && IS_PATH_SEPARATOR(path[2])) return 1;
+    if (IS_PATH_SEPARATOR(path[0]) && IS_PATH_SEPARATOR(path[1])) return 1;
+    return 0;
+#else
+    return path[0] == '/';
+#endif
+}
+
+// Get file extension
+static inline const char* path_extension(const char* path) {
+    const char* filename = path_filename(path);
+    const char* dot = strrchr(filename, '.');
+    return dot ? dot + 1 : "";
+}
+
+// Check if path exists
+static inline int path_exists(const char* path) {
+#ifdef PLATFORM_WINDOWS
+    DWORD attr = GetFileAttributesA(path);
+    return attr != INVALID_FILE_ATTRIBUTES;
+#else
+    return access(path, F_OK) == 0;
+#endif
+}
+
+// Check if path is a directory
+static inline int path_is_directory(const char* path) {
+#ifdef PLATFORM_WINDOWS
+    DWORD attr = GetFileAttributesA(path);
+    return (attr != INVALID_FILE_ATTRIBUTES) &&
+           (attr & FILE_ATTRIBUTE_DIRECTORY);
+#else
+    struct stat st;
+    return (stat(path, &st) == 0) && S_ISDIR(st.st_mode);
+#endif
+}
+
+#endif // PATH_H
+\end{lstlisting}
+
+\section{Process Management}
+
+Process creation is fundamentally different across platforms:
+
+\begin{itemize}
+    \item \textbf{Unix}: Uses \texttt{fork()} to clone the current process, then \texttt{exec()} to replace it with a new program. Simple and elegant.
+
+    \item \textbf{Windows}: No \texttt{fork()}! Must use \texttt{CreateProcess()} which creates a new process directly. Completely different model.
+\end{itemize}
+
+Why no \texttt{fork()} on Windows? Because Windows doesn't have copy-on-write process memory like Unix. Cloning a process would require copying all memory, which is prohibitively expensive.
+
+\subsection{Process Creation (No fork on Windows!)}
+
+\begin{lstlisting}
+// process.h - Portable process creation
+#ifndef PROCESS_H
+#define PROCESS_H
+
+#ifdef PLATFORM_WINDOWS
+    #include <windows.h>
+    #include <process.h>
+
+    typedef HANDLE process_t;
+    #define INVALID_PROCESS NULL
+
+    // Execute command and wait
+    static inline int process_execute(const char* cmd) {
+        return system(cmd);
+    }
+
+    // Spawn process (like fork + exec on Unix)
+    static inline process_t process_spawn(const char* path,
+                                         char* const argv[]) {
+        // Build command line
+        char cmdline[8192] = {0};
+        int pos = 0;
+
+        for (int i = 0; argv[i]; i++) {
+            if (i > 0) cmdline[pos++] = ' ';
+
+            // Quote arguments with spaces
+            int needs_quote = strchr(argv[i], ' ') != NULL;
+            if (needs_quote) cmdline[pos++] = '"';
+
+            strcpy(cmdline + pos, argv[i]);
+            pos += strlen(argv[i]);
+
+            if (needs_quote) cmdline[pos++] = '"';
+        }
+
+        STARTUPINFOA si = {0};
+        PROCESS_INFORMATION pi = {0};
+        si.cb = sizeof(si);
+
+        if (!CreateProcessA(path, cmdline, NULL, NULL, FALSE,
+                           0, NULL, NULL, &si, &pi)) {
+            return INVALID_PROCESS;
+        }
+
+        CloseHandle(pi.hThread);
+        return pi.hProcess;
+    }
+
+    // Wait for process to finish
+    static inline int process_wait(process_t proc) {
+        if (proc == INVALID_PROCESS) return -1;
+
+        WaitForSingleObject(proc, INFINITE);
+
+        DWORD exitcode;
+        GetExitCodeProcess(proc, &exitcode);
+        CloseHandle(proc);
+
+        return (int)exitcode;
+    }
+
+#else
+    #include <sys/types.h>
+    #include <sys/wait.h>
+    #include <unistd.h>
+
+    typedef pid_t process_t;
+    #define INVALID_PROCESS (-1)
+
+    // Execute command and wait
+    static inline int process_execute(const char* cmd) {
+        return system(cmd);
+    }
+
+    // Spawn process using fork + exec
+    static inline process_t process_spawn(const char* path,
+                                         char* const argv[]) {
+        pid_t pid = fork();
+
+        if (pid == -1) {
+            return INVALID_PROCESS;
+        }
+
+        if (pid == 0) {
+            // Child process
+            execv(path, argv);
+            // If execv returns, it failed
+            _exit(127);
+        }
+
+        // Parent process
+        return pid;
+    }
+
+    // Wait for process to finish
+    static inline int process_wait(process_t proc) {
+        if (proc == INVALID_PROCESS) return -1;
+
+        int status;
+        if (waitpid(proc, &status, 0) == -1) {
+            return -1;
+        }
+
+        if (WIFEXITED(status)) {
+            return WEXITSTATUS(status);
+        }
+
+        return -1;
+    }
+#endif
+
+// Get current process ID
+static inline int process_getpid(void) {
+#ifdef PLATFORM_WINDOWS
+    return (int)GetCurrentProcessId();
+#else
+    return (int)getpid();
+#endif
+}
+
+// Kill a process
+static inline int process_kill(process_t proc) {
+#ifdef PLATFORM_WINDOWS
+    return TerminateProcess(proc, 1) ? 0 : -1;
+#else
+    return kill(proc, SIGKILL);
+#endif
+}
+
+#endif // PROCESS_H
+\end{lstlisting}
+
+\begin{warningbox}
+\textbf{fork() doesn't exist on Windows!} You must use CreateProcess or \_spawn functions. This is one of the biggest portability challenges—Unix code using fork() needs complete rewriting for Windows.
+\end{warningbox}
+
+\section{Line Endings: CRLF vs LF}
+
+This seems trivial but causes real bugs:
+
+\begin{itemize}
+    \item \textbf{Unix/Linux/macOS}: Use LF (\texttt{\textbackslash n}) for line endings
+    \item \textbf{Windows}: Use CRLF (\texttt{\textbackslash r\textbackslash n}) for line endings
+    \item \textbf{Old Mac}: Used CR (\texttt{\textbackslash r}), but not since OS X
+\end{itemize}
+
+\textbf{Why it matters}: When you open a file in text mode on Windows, the C runtime automatically converts \texttt{\textbackslash n} to \texttt{\textbackslash r\textbackslash n} on write and vice versa on read. This is GREAT for text files but DISASTROUS for binary data.
+
+The fix: Always use binary mode (\texttt{"rb"}, \texttt{"wb"}) for precise control.
+
+\begin{lstlisting}
+// Line ending differences cause SO many bugs
+
+// Windows text files: \r\n (CRLF, 0x0D 0x0A)
+// Unix text files: \n (LF, 0x0A)
+// Old Mac: \r (CR, 0x0D)
+
+// When reading files:
+#ifdef PLATFORM_WINDOWS
+    // Windows fopen in text mode converts \r\n to \n automatically
+    FILE* f = fopen("file.txt", "r");  // Text mode
+
+    // Binary mode preserves \r\n
+    FILE* f = fopen("file.txt", "rb");  // Binary mode
+#else
+    // Unix: no conversion happens, \n is just \n
+    FILE* f = fopen("file.txt", "r");
+#endif
+
+// Portable approach: always use binary mode
+FILE* f = fopen("file.txt", "rb");
+
+// Then normalize line endings manually if needed
+void normalize_line_endings(char* text) {
+    char* read = text;
+    char* write = text;
+
+    while (*read) {
+        if (*read == '\r' && *(read + 1) == '\n') {
+            // CRLF -> LF
+            *write++ = '\n';
+            read += 2;
+        } else if (*read == '\r') {
+            // CR -> LF
+            *write++ = '\n';
+            read++;
+        } else {
+            *write++ = *read++;
+        }
+    }
+    *write = '\0';
+}
+
+// When writing: be explicit
+#ifdef PLATFORM_WINDOWS
+    fprintf(f, "Line 1\r\n");  // Native Windows format
+#else
+    fprintf(f, "Line 1\n");    // Unix format
+#endif
+
+// Or use a macro
+#ifdef PLATFORM_WINDOWS
+    #define EOL "\r\n"
+#else
+    #define EOL "\n"
+#endif
+
+fprintf(f, "Line 1" EOL);
+\end{lstlisting}
+
+\begin{tipbox}
+\textbf{Pro Tip:} Git handles this with \texttt{core.autocrlf}. Your editor might too. But in C code dealing with binary protocols or exact file formats, you need to handle it yourself!
+\end{tipbox}
+
+\section{Dynamic Libraries: .dll vs .so vs .dylib}
+
+Dynamic libraries (shared libraries) allow code to be loaded at runtime, enabling plugins and reducing memory usage. But the implementation varies wildly:
+
+\begin{itemize}
+    \item \textbf{Windows}: Uses \texttt{.dll} files with \texttt{LoadLibrary()}/\texttt{GetProcAddress()}
+    \item \textbf{Linux/BSD}: Uses \texttt{.so} files with \texttt{dlopen()}/\texttt{dlsym()}
+    \item \textbf{macOS}: Uses \texttt{.dylib} files (also supports \texttt{dlopen()}/\texttt{dlsym()})
+\end{itemize}
+
+\subsection{Naming and Extensions}
+
+\begin{lstlisting}
+// Library naming conventions differ:
+//
+// Windows (MSVC/MinGW):
+//   mylib.dll           (dynamic library)
+//   mylib.lib           (import library for DLL)
+//   mylib.a             (static library, MinGW)
+//
+// Linux:
+//   libmylib.so         (shared object)
+//   libmylib.so.1       (with version)
+//   libmylib.so.1.2.3   (full version)
+//   libmylib.a          (static library)
+//
+// macOS:
+//   libmylib.dylib      (dynamic library)
+//   libmylib.1.dylib    (with version)
+//   libmylib.a          (static library)
+
+// When loading dynamically:
+#ifdef PLATFORM_WINDOWS
+    #define LIB_PREFIX ""
+    #define LIB_SUFFIX ".dll"
+#elif defined(PLATFORM_MACOS)
+    #define LIB_PREFIX "lib"
+    #define LIB_SUFFIX ".dylib"
+#else
+    #define LIB_PREFIX "lib"
+    #define LIB_SUFFIX ".so"
+#endif
+
+// Build library name
+char libname[256];
+snprintf(libname, sizeof(libname), "%s%s%s",
+         LIB_PREFIX, "mylib", LIB_SUFFIX);
+// Result: "mylib.dll" on Windows, "libmylib.so" on Linux
+\end{lstlisting}
+
+\subsection{Symbol Export/Import}
+
+\begin{lstlisting}
+// mylib.h - Exporting symbols from DLL/shared library
+#ifndef MYLIB_H
+#define MYLIB_H
+
+// Windows requires explicit DLL export/import
+#ifdef PLATFORM_WINDOWS
+    #ifdef MYLIB_BUILDING
+        // Building the DLL
+        #define MYLIB_API __declspec(dllexport)
+    #else
+        // Using the DLL
+        #define MYLIB_API __declspec(dllimport)
+    #endif
+#else
+    // Unix: symbols are exported by default
+    // But you can control visibility
+    #if defined(__GNUC__) && __GNUC__ >= 4
+        #define MYLIB_API __attribute__((visibility("default")))
+    #else
+        #define MYLIB_API
+    #endif
+#endif
+
+// Now mark your API functions
+MYLIB_API int mylib_init(void);
+MYLIB_API void mylib_cleanup(void);
+MYLIB_API int mylib_do_something(int x);
+
+#endif // MYLIB_H
+
+// When compiling the library:
+// gcc -DMYLIB_BUILDING -shared -o libmylib.so mylib.c
+// cl /DMYLIB_BUILDING /LD mylib.c  (creates mylib.dll and mylib.lib)
+\end{lstlisting}
+
+\subsection{Dynamic Loading}
+
+\begin{lstlisting}
+// dynload.h - Portable dynamic library loading
+#ifndef DYNLOAD_H
+#define DYNLOAD_H
+
+#ifdef PLATFORM_WINDOWS
+    #include <windows.h>
+
+    typedef HMODULE dynlib_handle_t;
+
+    static inline dynlib_handle_t dynlib_open(const char* path) {
+        return LoadLibraryA(path);
+    }
+
+    static inline void* dynlib_symbol(dynlib_handle_t lib, const char* name) {
+        return (void*)GetProcAddress(lib, name);
+    }
+
+    static inline void dynlib_close(dynlib_handle_t lib) {
+        FreeLibrary(lib);
+    }
+
+    static inline const char* dynlib_error(void) {
+        static char buf[512];
+        DWORD err = GetLastError();
+        FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM, NULL, err,
+                      0, buf, sizeof(buf), NULL);
+        return buf;
+    }
+
+#else
+    #include <dlfcn.h>
+
+    typedef void* dynlib_handle_t;
+
+    static inline dynlib_handle_t dynlib_open(const char* path) {
+        return dlopen(path, RTLD_NOW | RTLD_LOCAL);
+    }
+
+    static inline void* dynlib_symbol(dynlib_handle_t lib, const char* name) {
+        return dlsym(lib, name);
+    }
+
+    static inline void dynlib_close(dynlib_handle_t lib) {
+        dlclose(lib);
+    }
+
+    static inline const char* dynlib_error(void) {
+        return dlerror();
+    }
+#endif
+
+// Example: Load plugin
+typedef int (*plugin_init_func)(void);
+
+int load_plugin(const char* name) {
+    char path[512];
+    snprintf(path, sizeof(path), "%s%s%s",
+             LIB_PREFIX, name, LIB_SUFFIX);
+
+    dynlib_handle_t lib = dynlib_open(path);
+    if (!lib) {
+        fprintf(stderr, "Failed to load %s: %s\n",
+                path, dynlib_error());
+        return -1;
+    }
+
+    plugin_init_func init = (plugin_init_func)
+        dynlib_symbol(lib, "plugin_init");
+
+    if (!init) {
+        fprintf(stderr, "Plugin missing init function\n");
+        dynlib_close(lib);
+        return -1;
+    }
+
+    return init();
+}
+
+#endif // DYNLOAD_H
+\end{lstlisting}
+
+\section{Signal Handling vs Windows Events}
+
+Handling Ctrl+C and other interrupts requires platform-specific code:
+
+\begin{itemize}
+    \item \textbf{Unix}: Uses signals (\texttt{SIGINT}, \texttt{SIGTERM}, etc.) with \texttt{signal()} or \texttt{sigaction()}
+    \item \textbf{Windows}: Uses console control handlers with \texttt{SetConsoleCtrlHandler()}
+\end{itemize}
+
+The concepts are similar but the APIs are completely different.
+
+\subsection{Portable Signal/Interrupt Handling}
+
+\begin{lstlisting}
+// signals.h - Portable signal handling
+#ifndef SIGNALS_H
+#define SIGNALS_H
+
+#include <signal.h>
+
+#ifdef PLATFORM_WINDOWS
+    #include <windows.h>
+
+    static volatile int signal_received = 0;
+
+    // Windows console control handler
+    static BOOL WINAPI console_ctrl_handler(DWORD signal) {
+        switch (signal) {
+            case CTRL_C_EVENT:
+            case CTRL_BREAK_EVENT:
+            case CTRL_CLOSE_EVENT:
+                signal_received = 1;
+                return TRUE;
+            default:
+                return FALSE;
+        }
+    }
+
+    static inline void signal_setup(void) {
+        SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+    }
+
+    static inline int signal_check(void) {
+        return signal_received;
+    }
+
+#else
+    // Unix signal handling
+    static volatile sig_atomic_t signal_received = 0;
+
+    static void signal_handler(int signum) {
+        (void)signum;
+        signal_received = 1;
+    }
+
+    static inline void signal_setup(void) {
+        struct sigaction sa;
+        sa.sa_handler = signal_handler;
+        sigemptyset(&sa.sa_mask);
+        sa.sa_flags = 0;
+
+        sigaction(SIGINT, &sa, NULL);   // Ctrl+C
+        sigaction(SIGTERM, &sa, NULL);  // Termination request
+
+        #ifndef PLATFORM_MACOS
+        // Ignore SIGPIPE (broken pipe)
+        signal(SIGPIPE, SIG_IGN);
+        #endif
+    }
+
+    static inline int signal_check(void) {
+        return signal_received;
+    }
+#endif
+
+#endif // SIGNALS_H
+\end{lstlisting}
+
+\section{Time and Sleep Functions}
+
+Even basic timing functions differ:
+
+\begin{itemize}
+    \item \textbf{Sleep duration}: Unix uses \texttt{sleep()} (seconds) or \texttt{usleep()} (microseconds). Windows uses \texttt{Sleep()} (milliseconds).
+    \item \textbf{High-resolution time}: Unix has \texttt{clock\_gettime()}. Windows has \texttt{QueryPerformanceCounter()}.
+    \item \textbf{Function names}: Note the capital 'S' in Windows \texttt{Sleep()} vs lowercase in Unix \texttt{sleep()}.
+\end{itemize}
+
+\subsection{Portable Timing}
+
+\begin{lstlisting}
+// timing.h - Portable high-resolution timing
+#ifndef TIMING_H
+#define TIMING_H
+
+#include <stdint.h>
+
+#ifdef PLATFORM_WINDOWS
+    #include <windows.h>
+
+    typedef struct {
+        LARGE_INTEGER freq;
+        LARGE_INTEGER start;
+    } timer_t;
+
+    static inline void timer_init(timer_t* t) {
+        QueryPerformanceFrequency(&t->freq);
+    }
+
+    static inline void timer_start(timer_t* t) {
+        QueryPerformanceCounter(&t->start);
+    }
+
+    static inline double timer_elapsed_seconds(timer_t* t) {
+        LARGE_INTEGER end;
+        QueryPerformanceCounter(&end);
+        return (double)(end.QuadPart - t->start.QuadPart) /
+               t->freq.QuadPart;
+    }
+
+    static inline uint64_t timer_elapsed_ms(timer_t* t) {
+        LARGE_INTEGER end;
+        QueryPerformanceCounter(&end);
+        return (uint64_t)(end.QuadPart - t->start.QuadPart) * 1000 /
+               t->freq.QuadPart;
+    }
+
+    // Sleep functions
+    static inline void sleep_ms(unsigned int ms) {
+        Sleep(ms);
+    }
+
+    static inline void sleep_seconds(unsigned int seconds) {
+        Sleep(seconds * 1000);
+    }
+
+#else
+    #include <time.h>
+    #include <unistd.h>
+
+    typedef struct {
+        struct timespec start;
+    } timer_t;
+
+    static inline void timer_init(timer_t* t) {
+        (void)t;
+    }
+
+    static inline void timer_start(timer_t* t) {
+        clock_gettime(CLOCK_MONOTONIC, &t->start);
+    }
+
+    static inline double timer_elapsed_seconds(timer_t* t) {
+        struct timespec end;
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        return (end.tv_sec - t->start.tv_sec) +
+               (end.tv_nsec - t->start.tv_nsec) / 1e9;
+    }
+
+    static inline uint64_t timer_elapsed_ms(timer_t* t) {
+        struct timespec end;
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        return (uint64_t)(end.tv_sec - t->start.tv_sec) * 1000 +
+               (end.tv_nsec - t->start.tv_nsec) / 1000000;
+    }
+
+    // Sleep functions
+    static inline void sleep_ms(unsigned int ms) {
+        usleep(ms * 1000);
+    }
+
+    static inline void sleep_seconds(unsigned int seconds) {
+        sleep(seconds);
+    }
+#endif
+
+#endif // TIMING_H
+\end{lstlisting}
+
+\section{Environment Variables}
+
+Even environment variables have platform quirks:
+
+\begin{itemize}
+    \item \textbf{Unix}: Case-sensitive (\texttt{PATH} $\neq$ \texttt{Path})
+    \item \textbf{Windows}: Case-insensitive (\texttt{PATH} == \texttt{Path})
+    \item \textbf{Thread safety}: \texttt{getenv()} is not thread-safe on any platform
+\end{itemize}
+
+\subsection{Safe Environment Access}
+
+\begin{lstlisting}
+// env.h - Portable environment variable access
+#ifndef ENV_H
+#define ENV_H
+
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef PLATFORM_WINDOWS
+    #include <windows.h>
+
+    // Get environment variable (returns newly allocated string)
+    static inline char* env_get(const char* name) {
+        DWORD size = GetEnvironmentVariableA(name, NULL, 0);
+        if (size == 0) return NULL;
+
+        char* value = malloc(size);
+        if (!value) return NULL;
+
+        GetEnvironmentVariableA(name, value, size);
+        return value;
+    }
+
+    // Set environment variable
+    static inline int env_set(const char* name, const char* value) {
+        return SetEnvironmentVariableA(name, value) ? 0 : -1;
+    }
+
+    // Unset environment variable
+    static inline int env_unset(const char* name) {
+        return SetEnvironmentVariableA(name, NULL) ? 0 : -1;
+    }
+
+#else
+    // Unix uses standard getenv/setenv/unsetenv
+
+    static inline char* env_get(const char* name) {
+        const char* value = getenv(name);
+        return value ? strdup(value) : NULL;
+    }
+
+    static inline int env_set(const char* name, const char* value) {
+        return setenv(name, value, 1);
+    }
+
+    static inline int env_unset(const char* name) {
+        return unsetenv(name);
+    }
+#endif
+
+#endif // ENV_H
+\end{lstlisting}
+
+\section{Complete Practical Example: A Cross-Platform HTTP Server}
+
+Let's put everything together. Here's a minimal HTTP server that works on Windows, Linux, and macOS, demonstrating all the concepts from this chapter:
+
+\begin{lstlisting}
+// server.c - Cross-platform HTTP server
+#include "platform.h"  // From earlier in chapter
+#include "sockets.h"   // From networking section
+#include "signals.h"   // From signals section
+
+#include <stdio.h>
+#include <string.h>
+#include <time.h>
+
+#define PORT 8080
+#define BUFFER_SIZE 4096
+
+// Platform-specific sleep
+void portable_sleep_ms(int milliseconds) {
+#ifdef PLATFORM_WINDOWS
+    Sleep(milliseconds);
+#else
+    usleep(milliseconds * 1000);
+#endif
+}
+
+// Get current timestamp
+void get_timestamp(char* buffer, size_t size) {
+    time_t now = time(NULL);
+    struct tm* tm_info = localtime(&now);
+    strftime(buffer, size, "%Y-%m-%d %H:%M:%S", tm_info);
+}
+
+// Send HTTP response
+void send_response(socket_t client, const char* status,
+                   const char* content_type, const char* body) {
+    char response[BUFFER_SIZE];
+    int len = snprintf(response, sizeof(response),
+        "HTTP/1.1 %s\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s",
+        status, content_type, strlen(body), body);
+
+    send(client, response, len, 0);
+}
+
+// Handle HTTP request
+void handle_request(socket_t client) {
+    char buffer[BUFFER_SIZE];
+    int bytes = recv(client, buffer, sizeof(buffer) - 1, 0);
+
+    if (bytes <= 0) {
+        return;
+    }
+
+    buffer[bytes] = '\0';
+
+    // Parse request line
+    char method[16], path[256];
+    sscanf(buffer, "%15s %255s", method, path);
+
+    // Generate response
+    char timestamp[64];
+    get_timestamp(timestamp, sizeof(timestamp));
+
+    char body[1024];
+    snprintf(body, sizeof(body),
+        "<html>\n"
+        "<head><title>Cross-Platform Server</title></head>\n"
+        "<body>\n"
+        "<h1>Hello from portable C!</h1>\n"
+        "<p>Method: %s</p>\n"
+        "<p>Path: %s</p>\n"
+        "<p>Time: %s</p>\n"
+        "<p>Platform: %s</p>\n"
+        "<p>Architecture: %s</p>\n"
+        "</body>\n"
+        "</html>\n",
+        method, path, timestamp,
+#ifdef PLATFORM_WINDOWS
+        "Windows",
+#elif defined(PLATFORM_LINUX)
+        "Linux",
+#elif defined(PLATFORM_MACOS)
+        "macOS",
+#else
+        "Unknown",
+#endif
+        ARCH_NAME);
+
+    send_response(client, "200 OK", "text/html", body);
+}
+
+int main(void) {
+    printf("Cross-Platform HTTP Server\n");
+    printf("Platform: ");
+#ifdef PLATFORM_WINDOWS
+    printf("Windows");
+#elif defined(PLATFORM_LINUX)
+    printf("Linux");
+#elif defined(PLATFORM_MACOS)
+    printf("macOS");
+#else
+    printf("Unknown");
+#endif
+    printf(" (%s)\n", ARCH_NAME);
+
+    // Initialize networking
+    if (net_init() != 0) {
+        fprintf(stderr, "Failed to initialize networking\n");
+        return 1;
+    }
+
+    // Setup signal handling
+    signal_setup();
+
+    // Create server socket
+    socket_t server = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (server == INVALID_SOCKET_FD) {
+        fprintf(stderr, "socket() failed: %s\n",
+                net_strerror(SOCKET_ERROR_CODE));
+        net_cleanup();
+        return 1;
+    }
+
+    // Set socket options
+    net_set_reuseaddr(server, 1);
+
+    // Bind to port
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(PORT);
+
+    if (bind(server, (struct sockaddr*)&addr, sizeof(addr))
+        == SOCKET_ERROR) {
+        fprintf(stderr, "bind() failed: %s\n",
+                net_strerror(SOCKET_ERROR_CODE));
+        net_close(server);
+        net_cleanup();
+        return 1;
+    }
+
+    // Listen
+    if (listen(server, 5) == SOCKET_ERROR) {
+        fprintf(stderr, "listen() failed: %s\n",
+                net_strerror(SOCKET_ERROR_CODE));
+        net_close(server);
+        net_cleanup();
+        return 1;
+    }
+
+    printf("Server listening on port %d\n", PORT);
+    printf("Press Ctrl+C to stop\n\n");
+
+    // Accept loop
+    while (!signal_check()) {
+        // Set short timeout for accept so we can check signals
+        net_set_blocking(server, 0);
+
+        socket_t client = accept(server, NULL, NULL);
+
+        if (client == INVALID_SOCKET_FD) {
+            // Would block - check for signal and continue
+            portable_sleep_ms(100);
+            continue;
+        }
+
+        printf("Client connected\n");
+        handle_request(client);
+        net_close(client);
+        printf("Client disconnected\n");
+    }
+
+    printf("\nShutting down...\n");
+    net_close(server);
+    net_cleanup();
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{Building the Example}
+
+\textbf{On Linux/macOS:}
+\begin{lstlisting}[language=bash]
+gcc -o server server.c -DPLATFORM_LINUX
+./server
+\end{lstlisting}
+
+\textbf{On Windows (MinGW):}
+\begin{lstlisting}[language=bash]
+gcc -o server.exe server.c -lws2_32 -DPLATFORM_WINDOWS
+server.exe
+\end{lstlisting}
+
+\textbf{On Windows (MSVC):}
+\begin{lstlisting}[language=bash]
+cl server.c /DPLATFORM_WINDOWS ws2_32.lib
+server.exe
+\end{lstlisting}
+
+\subsection{What This Example Demonstrates}
+
+\begin{enumerate}
+    \item \textbf{Platform Detection}: Uses macros from the platform.h header
+    \item \textbf{Network Abstraction}: Uses the sockets.h wrapper for portability
+    \item \textbf{Signal Handling}: Graceful shutdown on Ctrl+C (both platforms)
+    \item \textbf{Conditional Compilation}: Different code paths for Windows vs Unix
+    \item \textbf{Proper Cleanup}: WSACleanup on Windows, nothing needed on Unix
+    \item \textbf{Error Handling}: Platform-appropriate error messages
+    \item \textbf{Non-blocking I/O}: Timeout handling for signal checking
+\end{enumerate}
+
+This is the pattern used by real projects: abstract the differences, provide uniform interfaces, handle errors properly, test on all platforms.
+
+\section{Best Practices Summary}
+
+\subsection{The Golden Rules}
+
+\begin{enumerate}
+    \item \textbf{Isolate Platform Code}: Create thin abstraction layers (like our sockets.h)
+    \item \textbf{Test Everywhere}: Compilation success doesn't mean it works
+    \item \textbf{Use Feature Detection}: Not just platform detection
+    \item \textbf{Handle Errors Properly}: Error codes differ across platforms
+    \item \textbf{Mind the Encodings}: UTF-8 internally, convert at boundaries
+    \item \textbf{Respect Line Endings}: Use binary mode for exact control
+    \item \textbf{Abstract System Calls}: Never use raw Windows/POSIX APIs directly in business logic
+    \item \textbf{Document Platform Assumptions}: Be explicit about requirements
+\end{enumerate}
+
+\subsection{Common Pitfalls (and How to Avoid Them)}
+
+\begin{warningbox}
+\textbf{Watch Out For:}
+\begin{itemize}
+    \item \textbf{Assuming \texttt{int} is 32-bit}: Use \texttt{int32\_t} from \texttt{<stdint.h>}
+
+    \item \textbf{Ignoring endianness}: Use \texttt{htons()}/\texttt{ntohs()} for network protocols
+
+    \item \textbf{Mixing I/O functions}: Don't use \texttt{read()}/\texttt{write()} on sockets on Windows. Always use \texttt{send()}/\texttt{recv()} for sockets.
+
+    \item \textbf{Forgetting \texttt{WSAStartup()}}: On Windows, EVERY socket program needs this. Create a wrapper that calls it automatically.
+
+    \item \textbf{Using \texttt{fork()}}: Doesn't exist on Windows. Use \texttt{CreateProcess()} or better yet, use threads or a process abstraction library.
+
+    \item \textbf{Case sensitivity}: Write tests that verify behavior on case-sensitive file systems even if you develop on case-insensitive ones.
+
+    \item \textbf{Not handling EINTR}: On Unix, system calls can be interrupted by signals. Check for \texttt{errno == EINTR} and retry.
+
+    \item \textbf{MAX\_PATH limitations}: Windows paths limited to 260 chars by default. Use the \texttt{\textbackslash\textbackslash?\textbackslash} prefix for longer paths.
+
+    \item \textbf{UTF-16 vs UTF-8}: Keep UTF-8 internally. Convert to UTF-16 only when calling Windows W functions.
+
+    \item \textbf{Line endings in binary mode}: Always use \texttt{"rb"}/\texttt{"wb"} for binary files. Text mode converts line endings unpredictably.
+\end{itemize}
+\end{warningbox}
+
+\subsection{Testing Strategy}
+
+You cannot trust cross-platform code without testing it. Here's a practical strategy:
+
+\begin{enumerate}
+    \item \textbf{Test on actual platforms}: Virtual machines or CI/CD services (GitHub Actions, AppVeyor)
+
+    \item \textbf{Test corner cases}:
+    \begin{itemize}
+        \item Files with Unicode characters in names
+        \item Paths longer than 260 characters
+        \item Network errors and timeouts
+        \item Large files (>2GB) to catch 32-bit integer issues
+    \end{itemize}
+
+    \item \textbf{Test with different compilers}: GCC, Clang, MSVC all have quirks
+
+    \item \textbf{Test in different locales}: Set LANG and see if your program breaks
+
+    \item \textbf{Use static analysis}: Tools like cppcheck catch platform-specific bugs
+\end{enumerate}
+
+\section{Conclusion}
+
+Writing truly portable C code is challenging but achievable. You've now learned the complete landscape of platform differences and how to handle them professionally.
+
+\subsection{Key Takeaways}
+
+The fundamental insights from this chapter:
+
+\begin{itemize}
+    \item \textbf{Windows is fundamentally different}: Not just Unix with a GUI. It has different process models, different networking initialization, different string encoding, and different system APIs. Accept this and abstract it.
+
+    \item \textbf{Four Windows environments}: MSYS2 $\neq$ Cygwin $\neq$ MinGW $\neq$ MSVC. Each behaves differently. Your \texttt{\#ifdef} checks must account for all of them.
+
+    \item \textbf{Networking requires abstraction}: Winsock and BSD sockets look similar but are incompatible. Always wrap them in a uniform API like our sockets.h example.
+
+    \item \textbf{Character encoding is critical}: UTF-16 on Windows APIs, UTF-8 everywhere else. Keep UTF-8 internally and convert at Windows API boundaries.
+
+    \item \textbf{No fork() on Windows}: Process creation is completely different. Use threads or process abstractions instead of relying on Unix-specific \texttt{fork()}.
+
+    \item \textbf{Line endings affect binary data}: CRLF vs LF matters even for binary protocols. Always use binary mode (\texttt{"rb"}/\texttt{"wb"}) for precise control.
+
+    \item \textbf{File system quirks are everywhere}: Path separators, case sensitivity, length limits, reserved names---all differ. Use path manipulation functions, don't parse paths manually.
+
+    \item \textbf{Testing is non-negotiable}: Code that compiles on Linux might not work on Windows, and vice versa. Test on actual platforms, not just in theory.
+\end{itemize}
+
+\subsection{The Three-Layer Architecture}
+
+Successful cross-platform projects follow this pattern:
+
+\begin{enumerate}
+    \item \textbf{Platform Detection Layer}: Headers that define what platform you're on (\texttt{platform.h})
+
+    \item \textbf{Abstraction Layer}: Wrappers that provide uniform APIs (\texttt{sockets.h}, \texttt{path.h}, \texttt{signals.h})
+
+    \item \textbf{Application Layer}: Your actual code, which uses the abstractions and rarely needs \texttt{\#ifdef}
+\end{enumerate}
+
+This architecture is used by SQLite, cURL, FFmpeg, libuv, and virtually every successful cross-platform C project. It works.
+
+\subsection{Your Learning Path}
+
+Don't try to learn everything at once. Here's a practical progression:
+
+\begin{enumerate}
+    \item \textbf{Start simple}: Write code for one platform first. Get it working.
+
+    \item \textbf{Add platform detection}: Include the platform.h header. Understand what macros are defined.
+
+    \item \textbf{Port gradually}: Pick one feature (like networking) and make it cross-platform. Test it.
+
+    \item \textbf{Build abstractions}: Create wrappers for system-specific APIs. Make them look uniform.
+
+    \item \textbf{Test continuously}: Don't wait until "the end" to test on other platforms. Test early and often.
+
+    \item \textbf{Study real code}: Read how cURL handles networking, how SQLite handles file I/O, how Git handles processes. Learn from battle-tested code.
+\end{enumerate}
+
+\subsection{When Things Go Wrong}
+
+They will. Here's how to debug cross-platform issues:
+
+\begin{enumerate}
+    \item \textbf{Isolate the platform}: Does it fail on all platforms or just one? This tells you if it's platform-specific or a general bug.
+
+    \item \textbf{Check initialization}: On Windows, did you call \texttt{WSAStartup()}? Did you open files in binary mode?
+
+    \item \textbf{Verify types}: Socket types, error codes, file descriptors---all differ. Make sure you're using the right types.
+
+    \item \textbf{Print everything}: Use \texttt{printf} debugging liberally. Print error codes, return values, buffer contents.
+
+    \item \textbf{Read the actual error}: Use \texttt{net\_strerror()} or similar to get human-readable errors. Don't guess.
+
+    \item \textbf{Consult documentation}: Microsoft's docs for Windows APIs, POSIX specs for Unix. Know what the APIs actually guarantee.
+\end{enumerate}
+
+\subsection{The Reality Check}
+
+Cross-platform C development teaches you humility. You'll discover that:
+
+\begin{itemize}
+    \item Code that works perfectly on Linux will mysteriously fail on Windows
+    \item Tests passing in CI don't guarantee real-world compatibility
+    \item ``It works on my machine'' becomes your most-used phrase
+    \item Platform-specific bugs appear only in production, never during testing
+    \item File paths that work everywhere will break on that one customer's system
+\end{itemize}
+
+\subsection{War Stories: Real Platform Gotchas}
+
+\textbf{The Case-Sensitive Filename Mystery:}
+A developer wrote \texttt{\#include "Config.h"} but the actual file was \texttt{config.h}. Worked fine on Windows and macOS (case-insensitive), failed spectacularly on Linux CI servers.
+
+\textbf{The Socket That Wasn't:}
+Forgot \texttt{WSAStartup()} on Windows. Program worked perfectly in Wine on Linux (which doesn't require it), failed on actual Windows machines. Months of confusion ensued.
+
+\textbf{The Line Ending Horror:}
+Binary protocol accidentally used text mode file operations. Windows CRLF translation corrupted every packet. Debugger showed correct data before \texttt{fwrite()}, garbage after. The answer? \texttt{O\_BINARY}.
+
+\textbf{The MAX\_PATH Surprise:}
+Deep directory nesting in tests worked everywhere until a Windows user hit the 260-character path limit. Solution required Windows-specific long path prefix \texttt{\\textbackslash\textbackslash?\textbackslash}.
+
+\subsection{Final Wisdom}
+
+Platform-specific code isn't a failure—it's a reality. The goal isn't to avoid it entirely, but to:
+
+\begin{enumerate}
+    \item \textbf{Isolate it}: Keep platform code in clearly marked sections
+    \item \textbf{Abstract it}: Provide uniform interfaces above platform differences
+    \item \textbf{Test it}: Run on actual platforms, not just cross-compilers
+    \item \textbf{Document it}: Explain why platform-specific code exists
+    \item \textbf{Maintain it}: Platform APIs evolve; your abstractions must too
+\end{enumerate}
+
+Remember: Perfect portability is a myth. Good portability is achievable. Great portability means your platform-specific code is so well-organized that adding new platforms is straightforward.
+
+The best cross-platform code isn't code that magically works everywhere---it's code where platform differences are explicit, manageable, and testable. You've now seen how to write it.
+
+Now go forth and conquer all the platforms!
+
+\begin{tipbox}
+\textbf{Pro Tip:} Study how successful projects do it. Look at:
+\begin{itemize}
+    \item \textbf{cURL}: Networking abstraction done right
+    \item \textbf{SDL}: Graphics, input, and audio across all platforms
+    \item \textbf{SQLite}: Single-file database that runs everywhere
+    \item \textbf{libuv}: Cross-platform async I/O (powers Node.js)
+\end{itemize}
+\end{tipbox}

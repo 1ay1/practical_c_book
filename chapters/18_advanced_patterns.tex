@@ -1,0 +1,1204 @@
+\chapter{Advanced Patterns: The Deep Magic}
+
+\section{The Power of X-Macros Revisited}
+
+X-Macros are one of C's most powerful meta-programming tools. Let's explore advanced uses:
+
+\begin{lstlisting}
+// Define a complete subsystem with one list
+#define COMMANDS \
+    X(quit,   "q",  "Exit program",        cmd_quit) \
+    X(help,   "h",  "Show help",           cmd_help) \
+    X(save,   "s",  "Save current state",  cmd_save) \
+    X(load,   "l",  "Load saved state",    cmd_load) \
+    X(list,   "ls", "List items",          cmd_list) \
+    X(add,    "a",  "Add new item",        cmd_add)
+
+// Generate enum
+#define X(name, short_cmd, desc, func) CMD_##name,
+typedef enum {
+    COMMANDS
+    CMD_COUNT
+} Command;
+#undef X
+
+// Generate function prototypes
+#define X(name, short_cmd, desc, func) \
+    void func(const char* args);
+COMMANDS
+#undef X
+
+// Generate dispatch table
+#define X(name, short_cmd, desc, func) \
+    {#name, short_cmd, desc, func},
+typedef struct {
+    const char* name;
+    const char* short_name;
+    const char* description;
+    void (*handler)(const char*);
+} CommandEntry;
+
+CommandEntry command_table[] = {
+    COMMANDS
+};
+#undef X
+
+// Generate help text
+void print_help(void) {
+    printf("Available commands:\n");
+#define X(name, short_cmd, desc, func) \
+    printf("  %-10s (%-3s) - %s\n", #name, short_cmd, desc);
+    COMMANDS
+#undef X
+}
+
+// Generate command name lookup
+const char* command_name(Command cmd) {
+#define X(name, short_cmd, desc, func) #name,
+    static const char* names[] = { COMMANDS };
+#undef X
+    return names[cmd];
+}
+\end{lstlisting}
+
+\section{Coroutines in C}
+
+Implement cooperative multitasking without threads:
+
+\begin{lstlisting}
+// Simon Tatham's coroutine trick
+#define crBegin static int state=0; switch(state) { case 0:
+#define crReturn(x) do { state=__LINE__; return x; \
+                         case __LINE__:; } while(0)
+#define crFinish }
+
+// Example: State machine as coroutine
+int parser(int input) {
+    static int count = 0;
+
+    crBegin;
+
+    while(1) {
+        // Wait for start marker
+        while(input != START) {
+            crReturn(WAITING);
+        }
+
+        count = 0;
+        // Read data bytes
+        while(count < 10) {
+            crReturn(READING);
+            count++;
+        }
+
+        // Process complete packet
+        process_packet();
+        crReturn(COMPLETE);
+    }
+
+    crFinish;
+}
+
+// Duff's Device implementation
+typedef struct {
+    int state;
+    int i;
+    int total;
+} Coroutine;
+
+void process(Coroutine* co) {
+    switch(co->state) {
+        case 0: // Start
+            co->total = 0;
+            co->i = 0;
+
+        case 1: // Loop
+            while(co->i < 100) {
+                co->total += co->i;
+                co->i++;
+                co->state = 1;
+                return; // Yield
+            }
+
+            printf("Total: %d\n", co->total);
+            co->state = 2;
+
+        case 2: // Done
+            return;
+    }
+}
+\end{lstlisting}
+
+\section{Intrusive Data Structures}
+
+Linux kernel-style intrusive containers:
+
+\begin{lstlisting}
+// Intrusive list node
+typedef struct list_head {
+    struct list_head *next, *prev;
+} list_head;
+
+// Initialize list
+#define LIST_HEAD_INIT(name) { &(name), &(name) }
+#define LIST_HEAD(name) \
+    list_head name = LIST_HEAD_INIT(name)
+
+static inline void list_init(list_head* list) {
+    list->next = list;
+    list->prev = list;
+}
+
+// Add to list
+static inline void list_add(list_head* new_node,
+                             list_head* head) {
+    head->next->prev = new_node;
+    new_node->next = head->next;
+    new_node->prev = head;
+    head->next = new_node;
+}
+
+// Remove from list
+static inline void list_del(list_head* entry) {
+    entry->next->prev = entry->prev;
+    entry->prev->next = entry->next;
+}
+
+// Container-of magic
+#define container_of(ptr, type, member) \
+    ((type*)((char*)(ptr) - offsetof(type, member)))
+
+// Iterate
+#define list_for_each(pos, head) \
+    for (pos = (head)->next; pos != (head); pos = pos->next)
+
+#define list_entry(ptr, type, member) \
+    container_of(ptr, type, member)
+
+// Example usage
+typedef struct {
+    int id;
+    char name[50];
+    list_head list;  // Intrusive list node
+} Person;
+
+LIST_HEAD(people);
+
+void add_person(int id, const char* name) {
+    Person* p = malloc(sizeof(Person));
+    p->id = id;
+    strncpy(p->name, name, sizeof(p->name));
+    list_add(&p->list, &people);
+}
+
+void print_all_people(void) {
+    list_head* pos;
+    list_for_each(pos, &people) {
+        Person* p = list_entry(pos, Person, list);
+        printf("%d: %s\n", p->id, p->name);
+    }
+}
+\end{lstlisting}
+
+\section{Tagged Unions (Sum Types)}
+
+Type-safe variant types:
+
+\begin{lstlisting}
+typedef enum {
+    VALUE_INT,
+    VALUE_FLOAT,
+    VALUE_STRING,
+    VALUE_ERROR
+} ValueType;
+
+typedef struct {
+    ValueType type;
+    union {
+        int as_int;
+        double as_float;
+        char* as_string;
+        struct {
+            int code;
+            char message[100];
+        } as_error;
+    };
+} Value;
+
+// Type-safe constructors
+Value value_int(int x) {
+    return (Value){.type = VALUE_INT, .as_int = x};
+}
+
+Value value_float(double x) {
+    return (Value){.type = VALUE_FLOAT, .as_float = x};
+}
+
+Value value_string(const char* s) {
+    return (Value){.type = VALUE_STRING, .as_string = strdup(s)};
+}
+
+Value value_error(int code, const char* msg) {
+    Value v = {.type = VALUE_ERROR};
+    v.as_error.code = code;
+    strncpy(v.as_error.message, msg,
+            sizeof(v.as_error.message) - 1);
+    return v;
+}
+
+// Pattern matching with macros
+#define MATCH_VALUE(v, INT_CASE, FLOAT_CASE, STR_CASE, ERR_CASE) \
+    do { \
+        switch((v).type) { \
+            case VALUE_INT: { \
+                int _val = (v).as_int; \
+                INT_CASE(_val); \
+            } break; \
+            case VALUE_FLOAT: { \
+                double _val = (v).as_float; \
+                FLOAT_CASE(_val); \
+            } break; \
+            case VALUE_STRING: { \
+                char* _val = (v).as_string; \
+                STR_CASE(_val); \
+            } break; \
+            case VALUE_ERROR: { \
+                int _code = (v).as_error.code; \
+                char* _msg = (v).as_error.message; \
+                ERR_CASE(_code, _msg); \
+            } break; \
+        } \
+    } while(0)
+
+// Usage
+Value v = compute_value();
+MATCH_VALUE(v,
+    INT(x)   -> printf("Int: %d\n", x),
+    FLOAT(x) -> printf("Float: %f\n", x),
+    STR(x)   -> printf("String: %s\n", x),
+    ERR(c,m) -> printf("Error %d: %s\n", c, m)
+);
+\end{lstlisting}
+
+\section{Generic Programming with Macros}
+
+Type-safe generic containers:
+
+\begin{lstlisting}
+// Define a vector for any type
+#define DEFINE_VECTOR(T) \
+    typedef struct { \
+        T* data; \
+        size_t size; \
+        size_t capacity; \
+    } T##_vector; \
+    \
+    T##_vector* T##_vector_create(void) { \
+        T##_vector* v = malloc(sizeof(T##_vector)); \
+        v->data = NULL; \
+        v->size = 0; \
+        v->capacity = 0; \
+        return v; \
+    } \
+    \
+    void T##_vector_push(T##_vector* v, T item) { \
+        if(v->size >= v->capacity) { \
+            v->capacity = v->capacity ? v->capacity * 2 : 8; \
+            v->data = realloc(v->data, v->capacity * sizeof(T)); \
+        } \
+        v->data[v->size++] = item; \
+    } \
+    \
+    T T##_vector_get(T##_vector* v, size_t index) { \
+        return v->data[index]; \
+    } \
+    \
+    void T##_vector_destroy(T##_vector* v) { \
+        free(v->data); \
+        free(v); \
+    }
+
+// Generate vectors for different types
+DEFINE_VECTOR(int)
+DEFINE_VECTOR(float)
+DEFINE_VECTOR(double)
+
+// Usage
+int_vector* iv = int_vector_create();
+int_vector_push(iv, 42);
+int_vector_push(iv, 100);
+printf("%d\n", int_vector_get(iv, 0));
+int_vector_destroy(iv);
+\end{lstlisting}
+
+\section{Reflection and Introspection}
+
+Runtime type information in C:
+
+\begin{lstlisting}
+// Type descriptor
+typedef enum {
+    TYPE_INT,
+    TYPE_FLOAT,
+    TYPE_STRING,
+    TYPE_STRUCT
+} TypeKind;
+
+typedef struct TypeInfo TypeInfo;
+
+struct TypeInfo {
+    TypeKind kind;
+    const char* name;
+    size_t size;
+
+    // For structs
+    struct {
+        size_t field_count;
+        struct {
+            const char* name;
+            TypeInfo* type;
+            size_t offset;
+        } *fields;
+    } struct_info;
+};
+
+// Example: Describe a struct
+typedef struct {
+    int x;
+    int y;
+    char* name;
+} Point;
+
+TypeInfo int_type = {TYPE_INT, "int", sizeof(int)};
+TypeInfo charptr_type = {TYPE_STRING, "char*", sizeof(char*)};
+
+TypeInfo point_type = {
+    .kind = TYPE_STRUCT,
+    .name = "Point",
+    .size = sizeof(Point),
+    .struct_info = {
+        .field_count = 3,
+        .fields = (struct {const char* name; TypeInfo* type;
+                          size_t offset;}[]){
+            {"x", &int_type, offsetof(Point, x)},
+            {"y", &int_type, offsetof(Point, y)},
+            {"name", &charptr_type, offsetof(Point, name)},
+        }
+    }
+};
+
+// Generic serialization using type info
+void serialize(void* obj, TypeInfo* type, FILE* f) {
+    switch(type->kind) {
+        case TYPE_INT:
+            fprintf(f, "%d", *(int*)obj);
+            break;
+        case TYPE_FLOAT:
+            fprintf(f, "%f", *(float*)obj);
+            break;
+        case TYPE_STRING:
+            fprintf(f, "\"%s\"", *(char**)obj);
+            break;
+        case TYPE_STRUCT:
+            fprintf(f, "{");
+            for(size_t i = 0; i < type->struct_info.field_count; i++) {
+                if(i > 0) fprintf(f, ",");
+                fprintf(f, "\"%s\":",
+                        type->struct_info.fields[i].name);
+                void* field_ptr = (char*)obj +
+                    type->struct_info.fields[i].offset;
+                serialize(field_ptr,
+                         type->struct_info.fields[i].type, f);
+            }
+            fprintf(f, "}");
+            break;
+    }
+}
+\end{lstlisting}
+
+\section{Compile-Time Computation}
+
+Push work to compile time:
+
+\begin{lstlisting}
+// Compute at compile time with const
+static const int fibonacci[] = {
+    0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144
+};
+
+// Compile-time assertions
+#define COMPILE_TIME_ASSERT(cond) \
+    ((void)sizeof(char[1 - 2*!(cond)]))
+
+// Use in code
+void check_assumptions(void) {
+    COMPILE_TIME_ASSERT(sizeof(int) == 4);
+    COMPILE_TIME_ASSERT(sizeof(void*) == 8);
+    COMPILE_TIME_ASSERT(sizeof(long) >= sizeof(int));
+}
+
+// Constexpr-like behavior (C11)
+#define ARRAY_SIZE 100
+static const size_t buffer_size = ARRAY_SIZE * sizeof(int);
+char buffer[buffer_size]; // Compile-time computation
+\end{lstlisting}
+
+\section{Continuation Passing Style}
+
+\begin{lstlisting}
+// CPS transforms control flow into data
+typedef void (*Continuation)(void* result, void* context);
+
+void async_read_file(const char* path,
+                     Continuation cont,
+                     void* context) {
+    // Start async read
+    // When done, call: cont(data, context);
+}
+
+void on_file_read(void* result, void* context) {
+    char* data = (char*)result;
+    printf("File contents: %s\n", data);
+    free(data);
+}
+
+// Chain continuations
+void step1_done(void* result, void* context) {
+    printf("Step 1 complete\n");
+    async_read_file("file.txt", step2_done, context);
+}
+
+void step2_done(void* result, void* context) {
+    printf("Step 2 complete\n");
+    // Continue chain...
+}
+\end{lstlisting}
+
+\section{Object System}
+
+Minimal object-oriented system:
+
+\begin{lstlisting}
+// Base object with vtable
+typedef struct Class Class;
+typedef struct Object Object;
+
+struct Class {
+    const char* name;
+    size_t size;
+    void (*constructor)(Object* self);
+    void (*destructor)(Object* self);
+    char* (*to_string)(Object* self);
+};
+
+struct Object {
+    Class* class;
+    int ref_count;
+};
+
+// Object operations
+Object* object_new(Class* class) {
+    Object* obj = calloc(1, class->size);
+    obj->class = class;
+    obj->ref_count = 1;
+    if(class->constructor) {
+        class->constructor(obj);
+    }
+    return obj;
+}
+
+void object_retain(Object* obj) {
+    obj->ref_count++;
+}
+
+void object_release(Object* obj) {
+    if(--obj->ref_count == 0) {
+        if(obj->class->destructor) {
+            obj->class->destructor(obj);
+        }
+        free(obj);
+    }
+}
+
+// Example class
+typedef struct {
+    Object base;
+    int value;
+} Integer;
+
+void integer_constructor(Object* self) {
+    Integer* i = (Integer*)self;
+    i->value = 0;
+}
+
+char* integer_to_string(Object* self) {
+    Integer* i = (Integer*)self;
+    char* str = malloc(20);
+    sprintf(str, "%d", i->value);
+    return str;
+}
+
+Class IntegerClass = {
+    .name = "Integer",
+    .size = sizeof(Integer),
+    .constructor = integer_constructor,
+    .destructor = NULL,
+    .to_string = integer_to_string
+};
+
+// Usage
+Integer* num = (Integer*)object_new(&IntegerClass);
+num->value = 42;
+char* str = num->base.class->to_string((Object*)num);
+printf("%s\n", str);
+free(str);
+object_release((Object*)num);
+\end{lstlisting}
+
+\section{Zero-Cost Abstractions}
+
+Macros that compile to optimal code:
+
+\begin{lstlisting}
+// Optional type that optimizes away
+#define OPTION(T) \
+    struct { \
+        int has_value; \
+        T value; \
+    }
+
+#define SOME(x) {1, (x)}
+#define NONE {0}
+
+#define IS_SOME(opt) ((opt).has_value)
+#define UNWRAP(opt) ((opt).value)
+
+// Usage
+OPTION(int) maybe_divide(int a, int b) {
+    if(b == 0) {
+        OPTION(int) result = NONE;
+        return result;
+    }
+    OPTION(int) result = SOME(a / b);
+    return result;
+}
+
+OPTION(int) result = maybe_divide(10, 2);
+if(IS_SOME(result)) {
+    printf("Result: %d\n", UNWRAP(result));
+}
+
+// Compiles to simple branch, no overhead!
+\end{lstlisting}
+
+\section{Aspect-Oriented Programming}
+
+Cross-cutting concerns with macros:
+
+\begin{lstlisting}
+// Automatic logging
+#define LOGGED_FUNCTION(ret, name, ...) \
+    ret _logged_##name(__VA_ARGS__); \
+    ret name(__VA_ARGS__) { \
+        printf("[CALL] %s\n", #name); \
+        ret result = _logged_##name(__VA_ARGS__); \
+        printf("[RETURN] %s\n", #name); \
+        return result; \
+    } \
+    ret _logged_##name(__VA_ARGS__)
+
+// Use it
+LOGGED_FUNCTION(int, add, int a, int b) {
+    return a + b;
+}
+
+// Expands to function with automatic logging
+// add(5, 3) prints:
+// [CALL] add
+// [RETURN] add
+
+// Timing decorator
+#define TIMED_FUNCTION(ret, name, ...) \
+    ret _timed_##name(__VA_ARGS__); \
+    ret name(__VA_ARGS__) { \
+        clock_t start = clock(); \
+        ret result = _timed_##name(__VA_ARGS__); \
+        clock_t end = clock(); \
+        printf("%s took %.6f seconds\n", #name, \
+               (double)(end - start) / CLOCKS_PER_SEC); \
+        return result; \
+    } \
+    ret _timed_##name(__VA_ARGS__)
+\end{lstlisting}
+
+\section{Memory Pools: Custom Allocators}
+
+Sometimes malloc/free are too slow or cause fragmentation. Memory pools to the rescue:
+
+\begin{lstlisting}
+// Fixed-size object pool
+typedef struct Pool Pool;
+
+struct Pool {
+    void* memory;
+    size_t object_size;
+    size_t capacity;
+    size_t count;
+    void** free_list;
+};
+
+Pool* pool_create(size_t object_size, size_t capacity) {
+    Pool* pool = malloc(sizeof(Pool));
+    pool->object_size = object_size;
+    pool->capacity = capacity;
+    pool->count = 0;
+
+    // Allocate memory block
+    pool->memory = malloc(object_size * capacity);
+
+    // Build free list
+    pool->free_list = malloc(sizeof(void*) * capacity);
+    for(size_t i = 0; i < capacity; i++) {
+        pool->free_list[i] = (char*)pool->memory +
+                              (i * object_size);
+    }
+
+    return pool;
+}
+
+void* pool_alloc(Pool* pool) {
+    if(pool->count >= pool->capacity) {
+        return NULL; // Pool exhausted
+    }
+    return pool->free_list[pool->count++];
+}
+
+void pool_free(Pool* pool, void* ptr) {
+    if(pool->count == 0) return;
+    pool->free_list[--pool->count] = ptr;
+}
+
+void pool_destroy(Pool* pool) {
+    free(pool->memory);
+    free(pool->free_list);
+    free(pool);
+}
+
+// Usage: Lightning-fast allocation
+typedef struct { int x, y, z; } Particle;
+
+Pool* particle_pool = pool_create(sizeof(Particle), 10000);
+
+Particle* p1 = pool_alloc(particle_pool);
+Particle* p2 = pool_alloc(particle_pool);
+// No malloc overhead!
+
+pool_free(particle_pool, p1);
+pool_free(particle_pool, p2);
+\end{lstlisting}
+
+\subsection{Arena Allocator: Bulk Deallocation}
+
+\begin{lstlisting}
+// Allocate many objects, free all at once
+typedef struct {
+    char* buffer;
+    size_t size;
+    size_t used;
+} Arena;
+
+Arena* arena_create(size_t size) {
+    Arena* arena = malloc(sizeof(Arena));
+    arena->buffer = malloc(size);
+    arena->size = size;
+    arena->used = 0;
+    return arena;
+}
+
+void* arena_alloc(Arena* arena, size_t size) {
+    // Align to 8 bytes
+    size = (size + 7) & ~7;
+
+    if(arena->used + size > arena->size) {
+        return NULL; // Arena full
+    }
+
+    void* ptr = arena->buffer + arena->used;
+    arena->used += size;
+    return ptr;
+}
+
+void arena_reset(Arena* arena) {
+    arena->used = 0; // Free everything!
+}
+
+void arena_destroy(Arena* arena) {
+    free(arena->buffer);
+    free(arena);
+}
+
+// Perfect for per-request data in servers
+Arena* request_arena = arena_create(1024 * 1024); // 1MB
+
+while(handle_request()) {
+    // Allocate tons of temporary data
+    char* buffer = arena_alloc(request_arena, 4096);
+    Node* tree = arena_alloc(request_arena, sizeof(Node));
+
+    // Process request...
+
+    // Free everything instantly!
+    arena_reset(request_arena);
+}
+\end{lstlisting}
+
+\section{Plugin Systems: Dynamic Loading}
+
+Build extensible applications with runtime plugin loading:
+
+\begin{lstlisting}
+// Plugin interface
+typedef struct {
+    const char* name;
+    const char* version;
+    int (*init)(void);
+    void (*shutdown)(void);
+    void (*process)(void* data);
+} Plugin;
+
+// Plugin loader
+#ifdef _WIN32
+#include <windows.h>
+typedef HMODULE PluginHandle;
+#define LOAD_PLUGIN(path) LoadLibrary(path)
+#define GET_SYMBOL(handle, name) GetProcAddress(handle, name)
+#define CLOSE_PLUGIN(handle) FreeLibrary(handle)
+#else
+#include <dlfcn.h>
+typedef void* PluginHandle;
+#define LOAD_PLUGIN(path) dlopen(path, RTLD_LAZY)
+#define GET_SYMBOL(handle, name) dlsym(handle, name)
+#define CLOSE_PLUGIN(handle) dlclose(handle)
+#endif
+
+typedef struct {
+    PluginHandle handle;
+    Plugin* plugin;
+} LoadedPlugin;
+
+LoadedPlugin load_plugin(const char* path) {
+    LoadedPlugin loaded = {0};
+
+    loaded.handle = LOAD_PLUGIN(path);
+    if(!loaded.handle) {
+        fprintf(stderr, "Failed to load plugin: %s\n", path);
+        return loaded;
+    }
+
+    // Get plugin descriptor
+    Plugin* (*get_plugin)(void) = GET_SYMBOL(loaded.handle,
+                                              "get_plugin");
+    if(!get_plugin) {
+        fprintf(stderr, "Plugin missing get_plugin()\n");
+        CLOSE_PLUGIN(loaded.handle);
+        loaded.handle = NULL;
+        return loaded;
+    }
+
+    loaded.plugin = get_plugin();
+
+    if(loaded.plugin->init) {
+        if(loaded.plugin->init() != 0) {
+            fprintf(stderr, "Plugin init failed\n");
+            CLOSE_PLUGIN(loaded.handle);
+            loaded.handle = NULL;
+            return loaded;
+        }
+    }
+
+    printf("Loaded plugin: %s v%s\n",
+           loaded.plugin->name, loaded.plugin->version);
+
+    return loaded;
+}
+
+void unload_plugin(LoadedPlugin* loaded) {
+    if(loaded->handle) {
+        if(loaded->plugin && loaded->plugin->shutdown) {
+            loaded->plugin->shutdown();
+        }
+        CLOSE_PLUGIN(loaded->handle);
+        loaded->handle = NULL;
+        loaded->plugin = NULL;
+    }
+}
+
+// Example plugin implementation (in separate .so/.dll)
+int my_plugin_init(void) {
+    printf("My plugin initializing\n");
+    return 0;
+}
+
+void my_plugin_shutdown(void) {
+    printf("My plugin shutting down\n");
+}
+
+void my_plugin_process(void* data) {
+    printf("Processing: %s\n", (char*)data);
+}
+
+Plugin my_plugin = {
+    .name = "MyPlugin",
+    .version = "1.0",
+    .init = my_plugin_init,
+    .shutdown = my_plugin_shutdown,
+    .process = my_plugin_process
+};
+
+Plugin* get_plugin(void) {
+    return &my_plugin;
+}
+\end{lstlisting}
+
+\section{Domain-Specific Languages (DSLs)}
+
+Create mini-languages for specific tasks:
+
+\begin{lstlisting}
+// Simple expression DSL
+// Example: "x + y * 2" or "max(a, b + c)"
+
+typedef enum {
+    TOKEN_NUMBER,
+    TOKEN_IDENT,
+    TOKEN_PLUS,
+    TOKEN_MINUS,
+    TOKEN_STAR,
+    TOKEN_SLASH,
+    TOKEN_LPAREN,
+    TOKEN_RPAREN,
+    TOKEN_COMMA,
+    TOKEN_EOF
+} TokenType;
+
+typedef struct {
+    TokenType type;
+    union {
+        double number;
+        char ident[32];
+    };
+} Token;
+
+// Tokenizer
+typedef struct {
+    const char* input;
+    size_t pos;
+    Token current;
+} Lexer;
+
+void lexer_init(Lexer* lex, const char* input) {
+    lex->input = input;
+    lex->pos = 0;
+}
+
+void lexer_next(Lexer* lex) {
+    // Skip whitespace
+    while(isspace(lex->input[lex->pos])) lex->pos++;
+
+    char c = lex->input[lex->pos];
+
+    if(c == '\0') {
+        lex->current.type = TOKEN_EOF;
+        return;
+    }
+
+    if(isdigit(c)) {
+        char* end;
+        lex->current.type = TOKEN_NUMBER;
+        lex->current.number = strtod(lex->input + lex->pos, &end);
+        lex->pos = end - lex->input;
+        return;
+    }
+
+    if(isalpha(c)) {
+        lex->current.type = TOKEN_IDENT;
+        size_t i = 0;
+        while(isalnum(lex->input[lex->pos]) && i < 31) {
+            lex->current.ident[i++] = lex->input[lex->pos++];
+        }
+        lex->current.ident[i] = '\0';
+        return;
+    }
+
+    // Operators
+    lex->pos++;
+    switch(c) {
+        case '+': lex->current.type = TOKEN_PLUS; break;
+        case '-': lex->current.type = TOKEN_MINUS; break;
+        case '*': lex->current.type = TOKEN_STAR; break;
+        case '/': lex->current.type = TOKEN_SLASH; break;
+        case '(': lex->current.type = TOKEN_LPAREN; break;
+        case ')': lex->current.type = TOKEN_RPAREN; break;
+        case ',': lex->current.type = TOKEN_COMMA; break;
+    }
+}
+
+// Simple recursive descent parser
+typedef struct Expr Expr;
+
+struct Expr {
+    enum { EXPR_NUM, EXPR_VAR, EXPR_BINOP, EXPR_CALL } type;
+    union {
+        double number;
+        char var[32];
+        struct {
+            char op;
+            Expr *left, *right;
+        } binop;
+        struct {
+            char func[32];
+            Expr** args;
+            int arg_count;
+        } call;
+    };
+};
+
+// Parse and evaluate
+double eval(Expr* expr, double* vars) {
+    switch(expr->type) {
+        case EXPR_NUM:
+            return expr->number;
+        case EXPR_VAR:
+            // Look up variable (simplified)
+            return vars[expr->var[0] - 'a'];
+        case EXPR_BINOP: {
+            double left = eval(expr->binop.left, vars);
+            double right = eval(expr->binop.right, vars);
+            switch(expr->binop.op) {
+                case '+': return left + right;
+                case '-': return left - right;
+                case '*': return left * right;
+                case '/': return left / right;
+            }
+        }
+        case EXPR_CALL:
+            // Function calls (simplified)
+            if(strcmp(expr->call.func, "max") == 0) {
+                double a = eval(expr->call.args[0], vars);
+                double b = eval(expr->call.args[1], vars);
+                return a > b ? a : b;
+            }
+            break;
+    }
+    return 0;
+}
+
+// Usage
+// Parse "x + y * 2" and evaluate with x=5, y=3
+// Result: 5 + 3*2 = 11
+\end{lstlisting}
+
+\section{Finite State Transducers}
+
+Beyond state machines---transform input to output:
+
+\begin{lstlisting}
+// FST: Transform input sequence to output sequence
+typedef struct {
+    int state;
+    int input;
+    int output;
+    int next_state;
+} Transition;
+
+typedef struct {
+    Transition* transitions;
+    int transition_count;
+    int current_state;
+} FST;
+
+// Example: Convert "hello" to "HELLO"
+Transition uppercase_fst[] = {
+    {0, 'h', 'H', 0},
+    {0, 'e', 'E', 0},
+    {0, 'l', 'L', 0},
+    {0, 'o', 'O', 0},
+    // ... more transitions
+};
+
+int fst_process(FST* fst, int input) {
+    for(int i = 0; i < fst->transition_count; i++) {
+        Transition* t = &fst->transitions[i];
+        if(t->state == fst->current_state &&
+           t->input == input) {
+            fst->current_state = t->next_state;
+            return t->output;
+        }
+    }
+    return -1; // No transition
+}
+
+// More complex: Phone number formatter
+// Input: "5551234567"
+// Output: "(555) 123-4567"
+\end{lstlisting}
+
+\section{Visitor Pattern in C}
+
+Object-oriented visitor pattern without classes:
+
+\begin{lstlisting}
+// Abstract syntax tree
+typedef struct Node Node;
+
+struct Node {
+    enum { NODE_NUM, NODE_ADD, NODE_MUL } type;
+    union {
+        int number;
+        struct { Node *left, *right; } binop;
+    };
+};
+
+// Visitor interface
+typedef struct {
+    void (*visit_num)(int value, void* context);
+    void (*visit_add)(Node* left, Node* right, void* context);
+    void (*visit_mul)(Node* left, Node* right, void* context);
+} Visitor;
+
+void node_accept(Node* node, Visitor* visitor, void* context) {
+    switch(node->type) {
+        case NODE_NUM:
+            visitor->visit_num(node->number, context);
+            break;
+        case NODE_ADD:
+            node_accept(node->binop.left, visitor, context);
+            node_accept(node->binop.right, visitor, context);
+            visitor->visit_add(node->binop.left, node->binop.right,
+                              context);
+            break;
+        case NODE_MUL:
+            node_accept(node->binop.left, visitor, context);
+            node_accept(node->binop.right, visitor, context);
+            visitor->visit_mul(node->binop.left, node->binop.right,
+                              context);
+            break;
+    }
+}
+
+// Example visitor: Pretty printer
+void print_num(int value, void* ctx) {
+    printf("%d", value);
+}
+
+void print_add(Node* left, Node* right, void* ctx) {
+    printf(" + ");
+}
+
+void print_mul(Node* left, Node* right, void* ctx) {
+    printf(" * ");
+}
+
+Visitor printer = {
+    .visit_num = print_num,
+    .visit_add = print_add,
+    .visit_mul = print_mul
+};
+
+// Example visitor: Evaluator
+void eval_num(int value, void* ctx) {
+    int* result = (int*)ctx;
+    *result = value;
+}
+
+void eval_add(Node* left, Node* right, void* ctx) {
+    int left_val, right_val;
+    node_accept(left, &evaluator, &left_val);
+    node_accept(right, &evaluator, &right_val);
+    *(int*)ctx = left_val + right_val;
+}
+\end{lstlisting}
+
+\section{Summary}
+
+You've now seen the deep magic of C:
+
+\begin{itemize}
+    \item \textbf{X-Macros}: Maintainable code generation without external tools
+    \item \textbf{Coroutines}: Cooperative multitasking without threads
+    \item \textbf{Intrusive Structures}: Linux kernel-style zero-overhead containers
+    \item \textbf{Tagged Unions}: Type-safe variant types
+    \item \textbf{Generic Programming}: Type-safe generics through macros
+    \item \textbf{Reflection}: Runtime type information in C
+    \item \textbf{Compile-Time Computation}: Push work to the compiler
+    \item \textbf{Continuation Passing}: Transform control flow to data
+    \item \textbf{Object Systems}: OOP when you need it
+    \item \textbf{Zero-Cost Abstractions}: High-level code, low-level performance
+    \item \textbf{Aspect-Oriented}: Cross-cutting concerns through macros
+    \item \textbf{Memory Pools}: Custom allocators for performance
+    \item \textbf{Plugin Systems}: Runtime extensibility
+    \item \textbf{DSLs}: Domain-specific languages embedded in C
+    \item \textbf{FSTs}: Finite state transducers for transformations
+    \item \textbf{Visitor Pattern}: Object-oriented patterns without objects
+\end{itemize}
+
+\subsection{The Art of Advanced C}
+
+These patterns aren't tricks---they're techniques. Each solves real problems:
+
+\begin{itemize}
+    \item Use X-Macros when you have parallel data structures
+    \item Use intrusive containers when performance matters
+    \item Use memory pools for predictable allocation
+    \item Use plugins for extensible architectures
+    \item Use DSLs when configuration isn't enough
+    \item Use visitors when operations vary more than types
+\end{itemize}
+
+\subsection{When to Use Advanced Patterns}
+
+\textbf{Always:}
+\begin{itemize}
+    \item X-Macros for enums with string names
+    \item Tagged unions for variant types
+    \item Compile-time assertions
+\end{itemize}
+
+\textbf{Often:}
+\begin{itemize}
+    \item Generic programming with macros
+    \item Intrusive data structures in performance code
+    \item Memory pools in real-time systems
+\end{itemize}
+
+\textbf{Sometimes:}
+\begin{itemize}
+    \item Coroutines for state machines
+    \item Reflection for serialization
+    \item Plugin systems for extensibility
+\end{itemize}
+
+\textbf{Rarely:}
+\begin{itemize}
+    \item Full object systems (just use C++)
+    \item Continuation passing (confusing for most)
+    \item DSLs (big maintenance burden)
+\end{itemize}
+
+\subsection{Final Thoughts on Advanced Patterns}
+
+C is simple, but not simplistic. It provides just enough to build sophisticated abstractions while staying close to the metal. These patterns show that C can express complex ideas---but should you?
+
+The best C code is:
+\begin{enumerate}
+    \item \textbf{Obvious}: Someone reading it understands it quickly
+    \item \textbf{Efficient}: It doesn't waste resources
+    \item \textbf{Maintainable}: Future you can modify it without fear
+    \item \textbf{Appropriate}: The complexity matches the problem
+\end{enumerate}
+
+Don't use advanced patterns to show off. Use them to solve problems. The cleverest C code isn't the most complex---it's the simplest code that does the job right.
+
+Now you have the full arsenal of C techniques. Use them wisely, use them well, and remember: just because you \textit{can} build a coroutine-based intrusive generic reflection system doesn't mean you \textit{should}.
+
+Master the patterns, but master restraint too. That's the true art of C programming!

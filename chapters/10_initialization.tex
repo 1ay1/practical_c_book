@@ -1,0 +1,804 @@
+\chapter{Initialization Patterns}
+
+\section{Understanding Initialization}
+
+Initialization is more than just assigning values—it's about setting up data structures in a predictable, safe state. C offers several initialization techniques, each with its own strengths and use cases.
+
+\begin{lstlisting}
+// Different initialization styles
+int a = 0;                    // Simple initialization
+int b = {0};                  // Brace initialization
+int arr[5] = {1, 2, 3, 4, 5}; // Array initialization
+struct Point p = {10, 20};    // Struct initialization
+
+// Uninitialized (dangerous!)
+int x;        // Contains garbage
+int* ptr;     // Points to random memory
+\end{lstlisting}
+
+\begin{warningbox}
+Uninitialized variables contain garbage values. Always initialize your variables, especially pointers. Reading uninitialized data is undefined behavior.
+\end{warningbox}
+
+\section{Zero Initialization}
+
+The safest default—initialize everything to zero.
+
+\begin{lstlisting}
+// Zero-initialize everything
+int x = 0;
+int arr[100] = {0};           // All elements zero
+struct Data d = {0};          // All members zero
+char str[256] = {0};          // Null-terminated empty string
+
+// Shorthand: empty braces (C23 and some compilers)
+int arr2[100] = {};
+struct Data d2 = {};
+
+// Static/global variables are automatically zero-initialized
+static int counter;           // Initialized to 0
+static char buffer[1024];     // All bytes 0
+
+// Local variables are NOT zero-initialized
+void func(void) {
+    int x;                    // GARBAGE!
+    int y = 0;                // Explicitly zero
+}
+
+// Zero-initialize dynamically allocated memory
+int* ptr = calloc(100, sizeof(int));  // All zeros
+// vs
+int* ptr2 = malloc(100 * sizeof(int)); // GARBAGE!
+\end{lstlisting}
+
+\begin{tipbox}
+Use \texttt{= \{0\}} to zero-initialize any struct or array. It's simple, portable, and works everywhere.
+\end{tipbox}
+
+\section{Designated Initializers (C99)}
+
+Initialize specific members by name—much clearer than positional initialization.
+
+\subsection{Struct Designated Initializers}
+
+\begin{lstlisting}
+typedef struct {
+    int x;
+    int y;
+    int z;
+    char* name;
+} Point3D;
+
+// Positional initialization (old style)
+Point3D p1 = {10, 20, 30, "origin"};
+
+// Designated initializers (C99)
+Point3D p2 = {
+    .x = 10,
+    .y = 20,
+    .z = 30,
+    .name = "origin"
+};
+
+// Initialize only some members (others zero)
+Point3D p3 = {
+    .x = 100,
+    .name = "partial"
+    // y and z are 0
+};
+
+// Order doesn't matter
+Point3D p4 = {
+    .name = "reordered",
+    .z = 5,
+    .x = 15
+    // y is 0
+};
+
+// Mix styles (not recommended)
+Point3D p5 = {
+    .x = 1,
+    2,          // Sets y = 2 (next in sequence)
+    .z = 3
+};
+\end{lstlisting}
+
+\subsection{Array Designated Initializers}
+
+\begin{lstlisting}
+// Initialize specific array elements
+int sparse[100] = {
+    [0] = 1,
+    [10] = 2,
+    [50] = 3,
+    [99] = 4
+    // All other elements are 0
+};
+
+// Character arrays
+char vowels[26] = {
+    ['a' - 'a'] = 'a',
+    ['e' - 'a'] = 'e',
+    ['i' - 'a'] = 'i',
+    ['o' - 'a'] = 'o',
+    ['u' - 'a'] = 'u'
+};
+
+// Ranges (GNU extension)
+int range[100] = {
+    [0 ... 9] = 1,      // First 10 elements
+    [10 ... 19] = 2,    // Next 10 elements
+    [90 ... 99] = 9     // Last 10 elements
+};
+
+// Lookup tables
+int days_in_month[12] = {
+    [0] = 31,  // January
+    [1] = 28,  // February
+    [2] = 31,  // March
+    [3] = 30,  // April
+    [4] = 31,  // May
+    [5] = 30,  // June
+    [6] = 31,  // July
+    [7] = 31,  // August
+    [8] = 30,  // September
+    [9] = 31,  // October
+    [10] = 30, // November
+    [11] = 31  // December
+};
+\end{lstlisting}
+
+\subsection{Nested Designated Initializers}
+
+\begin{lstlisting}
+typedef struct {
+    int x, y;
+} Point;
+
+typedef struct {
+    Point top_left;
+    Point bottom_right;
+    char* label;
+} Rectangle;
+
+// Initialize nested structures
+Rectangle rect = {
+    .top_left = {.x = 0, .y = 100},
+    .bottom_right = {.x = 100, .y = 0},
+    .label = "main window"
+};
+
+// Array of structs
+Point points[3] = {
+    [0] = {.x = 0, .y = 0},
+    [1] = {.x = 10, .y = 10},
+    [2] = {.x = 20, .y = 20}
+};
+
+// Struct containing array
+typedef struct {
+    char name[32];
+    int scores[5];
+} Student;
+
+Student student = {
+    .name = "Alice",
+    .scores = {[0] = 95, [1] = 87, [4] = 92}
+    // scores[2] and scores[3] are 0
+};
+\end{lstlisting}
+
+\section{Compound Literals (C99)}
+
+Create temporary objects without declaring variables.
+
+\begin{lstlisting}
+// Traditional: need temporary variable
+Point temp = {10, 20};
+draw_point(&temp);
+
+// Compound literal: create temporary inline
+draw_point(&(Point){10, 20});
+
+// Array compound literals
+process_data((int[]){1, 2, 3, 4, 5}, 5);
+
+// String compound literal
+print_string((char[]){"Hello, World!"});
+
+// With designated initializers
+configure(&(Config){
+    .width = 800,
+    .height = 600,
+    .fullscreen = true
+});
+
+// Lifetime: until end of enclosing block
+void example(void) {
+    Point* p = &(Point){100, 200};  // Valid until end of function
+    // Use p...
+} // Compound literal destroyed here
+\end{lstlisting}
+
+\subsection{Compound Literal Patterns}
+
+\begin{lstlisting}
+// Default parameters pattern
+typedef struct {
+    int timeout;
+    int retries;
+    bool verbose;
+} Options;
+
+void connect(const char* host, const Options* opts) {
+    // Use opts->timeout, etc.
+}
+
+// Call with default options
+connect("localhost", &(Options){
+    .timeout = 5000,
+    .retries = 3,
+    .verbose = false
+});
+
+// Factory function pattern
+Point* create_origin(void) {
+    static Point origin = {0, 0};  // Don't do this with compound literal!
+    return &origin;
+}
+
+// Better: return by value or allocate
+Point get_origin(void) {
+    return (Point){0, 0};
+}
+
+// Initializer lists for variadic functions
+void log_values(int count, ...) {
+    va_list args;
+    va_start(args, count);
+    // Process values
+    va_end(args);
+}
+
+// Use compound literal with array
+int values[] = {1, 2, 3, 4, 5};
+log_values(5, values[0], values[1], values[2], values[3], values[4]);
+
+// Or pass array directly
+void log_array(const int* arr, size_t count);
+log_array((int[]){1, 2, 3, 4, 5}, 5);
+\end{lstlisting}
+
+\section{Static Initialization}
+
+Initialize data at compile time—faster and safer.
+
+\subsection{Static vs Dynamic Initialization}
+
+\begin{lstlisting}
+// Static initialization (compile time)
+static const int sizes[] = {1, 2, 4, 8, 16, 32};
+static const char* names[] = {"Alice", "Bob", "Charlie"};
+
+// These are embedded in the executable, no runtime cost
+
+// Dynamic initialization (runtime)
+void init(void) {
+    int* arr = malloc(6 * sizeof(int));
+    arr[0] = 1;
+    arr[1] = 2;
+    // ... Runtime overhead
+    free(arr);
+}
+
+// Static initialization wins:
+// - Faster (no runtime work)
+// - Safer (can't fail)
+// - Simpler (no cleanup needed)
+\end{lstlisting}
+
+\subsection{Constant Tables}
+
+\begin{lstlisting}
+// Lookup table for powers of 2
+static const unsigned int pow2[] = {
+    1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024
+};
+
+// Error message table
+static const char* const error_messages[] = {
+    [0] = "Success",
+    [1] = "Invalid argument",
+    [2] = "Out of memory",
+    [3] = "File not found",
+    [4] = "Permission denied"
+};
+
+const char* get_error_message(int code) {
+    if (code >= 0 && code < sizeof(error_messages)/sizeof(error_messages[0]))
+        return error_messages[code];
+    return "Unknown error";
+}
+
+// State machine transition table
+typedef enum { IDLE, RUNNING, PAUSED, STOPPED } State;
+typedef enum { START, PAUSE, RESUME, STOP } Event;
+
+static const State transitions[4][4] = {
+    //        START     PAUSE      RESUME    STOP
+    [IDLE]    = {RUNNING,  IDLE,      IDLE,     IDLE},
+    [RUNNING] = {RUNNING,  PAUSED,    RUNNING,  STOPPED},
+    [PAUSED]  = {PAUSED,   PAUSED,    RUNNING,  STOPPED},
+    [STOPPED] = {STOPPED,  STOPPED,   STOPPED,  STOPPED}
+};
+
+State next_state(State current, Event event) {
+    return transitions[current][event];
+}
+\end{lstlisting}
+
+\subsection{Read-Only Data}
+
+\begin{lstlisting}
+// const ensures data can't be modified
+static const int PRIMES[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29};
+
+// Pointer to const data
+static const char* const DAYS[] = {
+    "Sunday", "Monday", "Tuesday", "Wednesday",
+    "Thursday", "Friday", "Saturday"
+};
+
+// Both pointer and data are const:
+// - Can't modify strings
+// - Can't make pointer point elsewhere
+
+// Configuration constants
+typedef struct {
+    int width;
+    int height;
+    int bpp;
+} VideoMode;
+
+static const VideoMode VIDEO_MODES[] = {
+    {.width = 640,  .height = 480,  .bpp = 32},
+    {.width = 800,  .height = 600,  .bpp = 32},
+    {.width = 1024, .height = 768,  .bpp = 32},
+    {.width = 1920, .height = 1080, .bpp = 32}
+};
+
+static const size_t NUM_VIDEO_MODES =
+    sizeof(VIDEO_MODES) / sizeof(VIDEO_MODES[0]);
+\end{lstlisting}
+
+\section{Flexible Array Members (C99)}
+
+Structs with variable-length trailing arrays.
+
+\begin{lstlisting}
+// Flexible array member (must be last in struct)
+typedef struct {
+    size_t length;
+    int data[];  // Flexible array (size determined at allocation)
+} IntArray;
+
+// Allocate with specific size
+IntArray* create_array(size_t n) {
+    IntArray* arr = malloc(sizeof(IntArray) + n * sizeof(int));
+    if (arr) {
+        arr->length = n;
+        // Initialize data
+        for (size_t i = 0; i < n; i++) {
+            arr->data[i] = 0;
+        }
+    }
+    return arr;
+}
+
+// Use like normal array
+void use_array(IntArray* arr) {
+    for (size_t i = 0; i < arr->length; i++) {
+        printf("%d ", arr->data[i]);
+    }
+}
+
+// String with flexible array
+typedef struct {
+    size_t length;
+    char data[];
+} String;
+
+String* string_create(const char* str) {
+    size_t len = strlen(str);
+    String* s = malloc(sizeof(String) + len + 1);
+    if (s) {
+        s->length = len;
+        memcpy(s->data, str, len + 1);
+    }
+    return s;
+}
+\end{lstlisting}
+
+\begin{tipbox}
+Flexible array members are perfect for variable-sized data structures where the size is known at allocation time and won't change.
+\end{tipbox}
+
+\subsection{Flexible Array Member Patterns}
+
+\begin{lstlisting}
+// Message with variable payload
+typedef struct {
+    int type;
+    size_t payload_size;
+    unsigned char payload[];
+} Message;
+
+Message* create_message(int type, const void* data, size_t size) {
+    Message* msg = malloc(sizeof(Message) + size);
+    if (msg) {
+        msg->type = type;
+        msg->payload_size = size;
+        memcpy(msg->payload, data, size);
+    }
+    return msg;
+}
+
+// Vector implementation
+typedef struct {
+    size_t size;
+    size_t capacity;
+    int elements[];
+} Vector;
+
+Vector* vector_create(size_t capacity) {
+    Vector* v = malloc(sizeof(Vector) + capacity * sizeof(int));
+    if (v) {
+        v->size = 0;
+        v->capacity = capacity;
+    }
+    return v;
+}
+
+Vector* vector_push(Vector* v, int value) {
+    if (v->size >= v->capacity) {
+        // Reallocate with larger capacity
+        size_t new_cap = v->capacity * 2;
+        Vector* new_v = realloc(v, sizeof(Vector) + new_cap * sizeof(int));
+        if (!new_v) return NULL;
+        new_v->capacity = new_cap;
+        v = new_v;
+    }
+    v->elements[v->size++] = value;
+    return v;
+}
+\end{lstlisting}
+
+\section{Initialization Functions}
+
+When initialization is complex, use dedicated functions.
+
+\begin{lstlisting}
+// Simple initializer
+typedef struct {
+    int* data;
+    size_t size;
+    size_t capacity;
+} Buffer;
+
+void buffer_init(Buffer* buf, size_t initial_capacity) {
+    buf->data = malloc(initial_capacity * sizeof(int));
+    buf->size = 0;
+    buf->capacity = initial_capacity;
+}
+
+void buffer_destroy(Buffer* buf) {
+    free(buf->data);
+    buf->data = NULL;
+    buf->size = 0;
+    buf->capacity = 0;
+}
+
+// Usage
+Buffer buf;
+buffer_init(&buf, 100);
+// Use buffer...
+buffer_destroy(&buf);
+
+// Factory function (returns new object)
+Buffer* buffer_create(size_t initial_capacity) {
+    Buffer* buf = malloc(sizeof(Buffer));
+    if (buf) {
+        buffer_init(buf, initial_capacity);
+    }
+    return buf;
+}
+
+void buffer_free(Buffer* buf) {
+    if (buf) {
+        buffer_destroy(buf);
+        free(buf);
+    }
+}
+
+// Usage
+Buffer* buf = buffer_create(100);
+// Use buffer...
+buffer_free(buf);
+\end{lstlisting}
+
+\subsection{Constructor/Destructor Pattern}
+
+\begin{lstlisting}
+// Database connection object
+typedef struct Database Database;
+
+// Constructor with error handling
+Database* database_connect(const char* host, int port, const char* user,
+                          const char* password) {
+    Database* db = calloc(1, sizeof(Database));
+    if (!db) return NULL;
+
+    // Initialize members
+    db->host = strdup(host);
+    db->port = port;
+    db->connected = false;
+
+    // Connect
+    if (!internal_connect(db, user, password)) {
+        database_close(db);
+        return NULL;
+    }
+
+    db->connected = true;
+    return db;
+}
+
+// Destructor (cleanup)
+void database_close(Database* db) {
+    if (!db) return;
+
+    if (db->connected) {
+        internal_disconnect(db);
+    }
+
+    free(db->host);
+    free(db->query_buffer);
+    // Clean up all resources
+
+    memset(db, 0, sizeof(*db));  // Zero for safety
+    free(db);
+}
+
+// Usage with cleanup
+void example(void) {
+    Database* db = database_connect("localhost", 5432, "user", "pass");
+    if (!db) {
+        fprintf(stderr, "Connection failed\n");
+        return;
+    }
+
+    // Use database...
+
+    database_close(db);  // Always cleanup
+}
+\end{lstlisting}
+
+\section{Copy Initialization}
+
+\begin{lstlisting}
+// Shallow copy (default behavior)
+typedef struct {
+    int x, y;
+} Point;
+
+Point p1 = {10, 20};
+Point p2 = p1;  // Bitwise copy (shallow)
+
+// Deep copy needed for pointers
+typedef struct {
+    char* name;
+    int* data;
+    size_t size;
+} Object;
+
+// Shallow copy (DANGEROUS!)
+Object obj1 = {...};
+Object obj2 = obj1;  // Both point to same memory!
+free(obj1.data);     // obj2.data now invalid!
+
+// Deep copy function
+Object* object_copy(const Object* src) {
+    Object* dst = malloc(sizeof(Object));
+    if (!dst) return NULL;
+
+    // Copy name string
+    dst->name = strdup(src->name);
+    if (!dst->name) {
+        free(dst);
+        return NULL;
+    }
+
+    // Copy data array
+    dst->size = src->size;
+    dst->data = malloc(dst->size * sizeof(int));
+    if (!dst->data) {
+        free(dst->name);
+        free(dst);
+        return NULL;
+    }
+    memcpy(dst->data, src->data, dst->size * sizeof(int));
+
+    return dst;
+}
+
+// Copy assignment
+void object_assign(Object* dst, const Object* src) {
+    if (dst == src) return;  // Self-assignment check
+
+    // Free old data
+    free(dst->name);
+    free(dst->data);
+
+    // Copy new data
+    dst->name = strdup(src->name);
+    dst->size = src->size;
+    dst->data = malloc(dst->size * sizeof(int));
+    memcpy(dst->data, src->data, dst->size * sizeof(int));
+}
+\end{lstlisting}
+
+\section{Global Initialization}
+
+\begin{lstlisting}
+// Global variables are zero-initialized before main()
+int global_counter = 0;  // Explicit (redundant)
+static char buffer[1024]; // Implicitly zero
+
+// Complex global initialization
+typedef struct {
+    bool initialized;
+    void* handle;
+    char* config_path;
+} GlobalState;
+
+static GlobalState g_state = {0};
+
+// One-time initialization
+void ensure_initialized(void) {
+    if (!g_state.initialized) {
+        g_state.handle = open_handle();
+        g_state.config_path = get_config_path();
+        g_state.initialized = true;
+        atexit(cleanup);  // Register cleanup
+    }
+}
+
+void cleanup(void) {
+    if (g_state.initialized) {
+        close_handle(g_state.handle);
+        free(g_state.config_path);
+        g_state.initialized = false;
+    }
+}
+
+// Thread-safe initialization (C11)
+#include <threads.h>
+
+static once_flag init_flag = ONCE_FLAG_INIT;
+
+void do_init(void) {
+    // Expensive initialization
+    g_state.handle = open_handle();
+    g_state.initialized = true;
+}
+
+void thread_safe_init(void) {
+    call_once(&init_flag, do_init);
+    // Guaranteed to run exactly once across all threads
+}
+\end{lstlisting}
+
+\section{Initialization Best Practices}
+
+\subsection{Always Initialize}
+
+\begin{lstlisting}
+// BAD: Uninitialized
+void bad_example(void) {
+    int x;
+    int* ptr;
+    char buffer[256];
+
+    // Using these is undefined behavior!
+}
+
+// GOOD: Always initialize
+void good_example(void) {
+    int x = 0;
+    int* ptr = NULL;
+    char buffer[256] = {0};
+
+    // Safe to use
+}
+
+// Use initializers even for complex types
+typedef struct {
+    int count;
+    char* name;
+    double value;
+} Data;
+
+// BAD
+Data data;
+data.count = 0;
+data.name = NULL;
+data.value = 0.0;
+
+// GOOD
+Data data = {0};  // Zero-initialize everything
+\end{lstlisting}
+
+\subsection{Use Designated Initializers}
+
+\begin{lstlisting}
+// BAD: Positional (fragile)
+Point3D p = {10, 20, 30, "label"};
+// If struct changes order, this breaks!
+
+// GOOD: Designated (robust)
+Point3D p = {
+    .x = 10,
+    .y = 20,
+    .z = 30,
+    .name = "label"
+};
+// Still works if struct reordered
+
+// GREAT: Default values
+Point3D p = {
+    .x = 10,
+    .name = "partial"
+    // y and z automatically 0
+};
+\end{lstlisting}
+
+\subsection{Const Correctness}
+
+\begin{lstlisting}
+// Mark read-only data as const
+static const int BUFFER_SIZE = 1024;
+static const char* const ERROR_MSG = "Error occurred";
+
+// Function taking const pointer (won't modify)
+void process(const Data* data) {
+    // Can read, can't modify
+}
+
+// Const array
+static const int LOOKUP[] = {1, 2, 3, 4, 5};
+
+// Const protects from accidents
+void example(void) {
+    BUFFER_SIZE = 2048;  // Compile error!
+    LOOKUP[0] = 10;      // Compile error!
+}
+\end{lstlisting}
+
+\section{Summary}
+
+Initialization patterns in C:
+
+\begin{itemize}
+    \item Always initialize variables—uninitialized data is undefined behavior
+    \item Use \texttt{= \{0\}} for zero-initialization of any type
+    \item Designated initializers (C99) make code clearer and more maintainable
+    \item Compound literals create temporary objects inline
+    \item Static initialization is faster and safer than dynamic
+    \item Flexible array members handle variable-sized data elegantly
+    \item Use initialization functions for complex setup
+    \item Deep copy when dealing with pointers
+    \item Mark const data as \texttt{const} for safety
+    \item Prefer static/compile-time initialization when possible
+\end{itemize}
+
+Proper initialization prevents bugs and makes code more robust!

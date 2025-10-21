@@ -1,0 +1,3221 @@
+\chapter{Performance Patterns: 50 Years of C Optimization Tricks}
+
+\section{Introduction: The Pursuit of Speed}
+
+C has been the language of choice for performance-critical systems for over 50 years. During this time, programmers have discovered countless tricks, idioms, and patterns to squeeze every last cycle out of the hardware. This chapter collects the wisdom of generations of C programmers—from the early days of PDP-11s to modern multi-core processors with complex memory hierarchies.
+
+\begin{tipbox}
+\textbf{The Golden Rule:} Profile first, optimize second. Measure everything. Your intuition about performance is probably wrong.
+\end{tipbox}
+
+\section{Understanding Modern CPU Architecture}
+
+Before diving into tricks, understand what makes modern CPUs fast:
+
+\begin{lstlisting}
+// CPU speed hierarchy (approximate latencies):
+// Register access:     0-1 cycles
+// L1 cache:            4 cycles
+// L2 cache:            12 cycles
+// L3 cache:            38 cycles
+// Main RAM:            100-300 cycles
+// SSD:                 50,000-150,000 cycles
+// Network (LAN):       millions of cycles
+
+// This means: cache misses kill performance!
+// A single cache miss can cost 100+ instructions worth of time
+\end{lstlisting}
+
+Modern CPUs have:
+\begin{itemize}
+    \item \textbf{Pipelining:} Multiple instructions in flight simultaneously
+    \item \textbf{Branch prediction:} Guesses which way branches go
+    \item \textbf{Out-of-order execution:} Runs instructions when data is ready, not in order
+    \item \textbf{Speculative execution:} Executes both paths of a branch
+    \item \textbf{SIMD:} Single Instruction Multiple Data parallelism
+    \item \textbf{Prefetching:} Loads data before it's needed
+\end{itemize}
+
+\section{Cache-Friendly Programming}
+
+\subsection{The Power of Sequential Access}
+
+\begin{lstlisting}
+// Example: Processing 1 million integers
+// Sequential access: ~3ms
+// Random access: ~300ms (100x slower!)
+
+// Bad: Pointer chasing (cache miss every access)
+typedef struct Node {
+    int data;
+    struct Node* next;
+} Node;
+
+void sum_list(Node* head) {
+    long sum = 0;
+    for (Node* n = head; n; n = n->next) {
+        sum += n->data;  // Each access is likely a cache miss
+    }
+}
+
+// Good: Array (stays in cache)
+void sum_array(int* arr, size_t len) {
+    long sum = 0;
+    for (size_t i = 0; i < len; i++) {
+        sum += arr[i];  // Prefetcher loads next cache line
+    }
+}
+\end{lstlisting}
+
+\subsection{Array of Structs vs Struct of Arrays}
+
+This is one of the most important optimization patterns:
+
+\begin{lstlisting}
+// Array of Structs (AoS) - typical object-oriented layout
+typedef struct {
+    float x, y, z;     // Position: 12 bytes
+    float r, g, b, a;  // Color: 16 bytes
+    float nx, ny, nz;  // Normal: 12 bytes
+    float u, v;        // Texture coords: 8 bytes
+} Vertex;  // Total: 48 bytes
+
+Vertex vertices[10000];
+
+// Process only positions - loads ALL 48 bytes per vertex!
+for (int i = 0; i < 10000; i++) {
+    vertices[i].x += 1.0f;
+    // Also loads color, normal, UV (wasted bandwidth)
+}
+
+// Struct of Arrays (SoA) - data-oriented layout
+typedef struct {
+    float* x;
+    float* y;
+    float* z;
+    float* r;
+    float* g;
+    float* b;
+    float* a;
+    float* nx;
+    float* ny;
+    float* nz;
+    float* u;
+    float* v;
+    size_t count;
+} VertexArray;
+
+// Initialize SoA
+VertexArray* create_vertices(size_t count) {
+    VertexArray* va = malloc(sizeof(VertexArray));
+    va->count = count;
+    va->x = malloc(count * sizeof(float));
+    va->y = malloc(count * sizeof(float));
+    // ... allocate other fields
+    return va;
+}
+
+// Process only positions - loads ONLY position data!
+for (size_t i = 0; i < va->count; i++) {
+    va->x[i] += 1.0f;
+    // Perfect cache utilization
+}
+
+// Hybrid approach: "Chunked" SoA
+#define CHUNK_SIZE 64
+typedef struct {
+    float x[CHUNK_SIZE];
+    float y[CHUNK_SIZE];
+    float z[CHUNK_SIZE];
+} PositionChunk;
+
+typedef struct {
+    float r[CHUNK_SIZE];
+    float g[CHUNK_SIZE];
+    float b[CHUNK_SIZE];
+} ColorChunk;
+
+// Now positions and colors are separate, but each is contiguous
+// Good cache locality + reasonable memory layout
+\end{lstlisting}
+
+\subsection{Cache Line Alignment and False Sharing}
+
+\begin{lstlisting}
+// Cache lines are typically 64 bytes
+#define CACHE_LINE_SIZE 64
+
+// False sharing: Different threads accessing different variables
+// in the same cache line causes cache thrashing
+typedef struct {
+    int counter1;  // Thread 1 updates this
+    int counter2;  // Thread 2 updates this
+} BadCounters;  // Both in same cache line - constant invalidation!
+
+// Fix: Align each counter to its own cache line
+typedef struct {
+    alignas(64) int counter1;
+    char pad1[CACHE_LINE_SIZE - sizeof(int)];
+    alignas(64) int counter2;
+    char pad2[CACHE_LINE_SIZE - sizeof(int)];
+} GoodCounters;
+
+// Or use compiler attribute
+typedef struct {
+    int counter1;
+} __attribute__((aligned(64))) AlignedCounter;
+
+// Prefetch next cache line in advance
+for (size_t i = 0; i < n; i++) {
+    __builtin_prefetch(&data[i + 8], 0, 3);  // Prefetch 8 ahead
+    process(data[i]);
+}
+\end{lstlisting}
+
+\subsection{Loop Blocking (Tiling) for Cache}
+
+Classic technique from BLAS/LAPACK libraries:
+
+\begin{lstlisting}
+// Matrix multiplication: naive version
+// Poor cache usage for large matrices
+void matmul_naive(float** A, float** B, float** C, int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            float sum = 0;
+            for (int k = 0; k < n; k++) {
+                sum += A[i][k] * B[k][j];  // B accessed non-sequentially
+            }
+            C[i][j] = sum;
+        }
+    }
+}
+
+// Blocked version: process in cache-sized tiles
+#define BLOCK_SIZE 32  // Tune for your cache size
+
+void matmul_blocked(float** A, float** B, float** C, int n) {
+    // Zero output
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < n; j++)
+            C[i][j] = 0;
+
+    // Process in blocks
+    for (int ii = 0; ii < n; ii += BLOCK_SIZE) {
+        for (int jj = 0; jj < n; jj += BLOCK_SIZE) {
+            for (int kk = 0; kk < n; kk += BLOCK_SIZE) {
+                // Multiply block
+                int i_max = (ii + BLOCK_SIZE < n) ? ii + BLOCK_SIZE : n;
+                int j_max = (jj + BLOCK_SIZE < n) ? jj + BLOCK_SIZE : n;
+                int k_max = (kk + BLOCK_SIZE < n) ? kk + BLOCK_SIZE : n;
+
+                for (int i = ii; i < i_max; i++) {
+                    for (int j = jj; j < j_max; j++) {
+                        float sum = C[i][j];
+                        for (int k = kk; k < k_max; k++) {
+                            sum += A[i][k] * B[k][j];
+                        }
+                        C[i][j] = sum;
+                    }
+                }
+            }
+        }
+    }
+}
+// Speedup: 5-10x for large matrices!
+\end{lstlisting}
+
+\section{Branch Prediction and Control Flow}
+
+\subsection{Likely/Unlikely Hints}
+
+\begin{lstlisting}
+// Branch prediction helps, but you can guide the CPU
+#define likely(x)   __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+
+// Use for error handling
+if (unlikely(ptr == NULL)) {
+    // Rare error path
+    handle_error();
+    return -1;
+}
+// Common path continues here
+
+// Critical hot loop
+while (likely(has_more_data())) {
+    process_next();
+}
+
+// Real example: Linux kernel uses this everywhere
+int copy_from_user(void* to, const void* from, size_t n) {
+    if (unlikely(!access_ok(from, n)))
+        return -EFAULT;
+    return __copy_from_user(to, from, n);
+}
+\end{lstlisting}
+
+\subsection{Branchless Code}
+
+Sometimes eliminating branches is faster than predicting them:
+
+\begin{lstlisting}
+// With branch
+int max_with_branch(int a, int b) {
+    if (a > b)
+        return a;
+    else
+        return b;
+}
+
+// Branchless using ternary (compiler often optimizes this)
+int max_branchless(int a, int b) {
+    return (a > b) ? a : b;
+}
+
+// Branchless using bit tricks
+int max_bitwise(int a, int b) {
+    int diff = a - b;
+    int sign = diff >> 31;  // -1 if a < b, 0 if a >= b
+    return a - (diff & sign);
+}
+
+// Branchless absolute value
+int abs_branch(int x) {
+    return x < 0 ? -x : x;  // Branch
+}
+
+int abs_branchless(int x) {
+    int mask = x >> 31;  // All 1s if negative, all 0s if positive
+    return (x + mask) ^ mask;
+}
+
+// Branchless min/max for floats (using CMOV instruction)
+float fmax_branchless(float a, float b) {
+    return a > b ? a : b;  // Compiles to MAXSS on x86
+}
+
+// Branchless selection
+int select(int condition, int true_val, int false_val) {
+    // If condition is 0 or 1
+    return false_val + (condition & (true_val - false_val));
+}
+
+// Copy if condition is true (branchless)
+void conditional_copy(int* dst, int* src, int condition) {
+    int mask = -condition;  // 0xFFFFFFFF if true, 0 if false
+    *dst = (*dst & ~mask) | (*src & mask);
+}
+\end{lstlisting}
+
+\subsection{Computed Goto (GCC Extension)}
+
+Much faster than switch for interpreters and VMs:
+
+\begin{lstlisting}
+// Traditional switch-based interpreter
+enum OpCode { OP_ADD, OP_SUB, OP_MUL, OP_DIV, OP_HALT };
+
+void interpret_switch(uint8_t* bytecode) {
+    int pc = 0;
+    int stack[256];
+    int sp = 0;
+
+    while (1) {
+        switch (bytecode[pc++]) {
+            case OP_ADD:
+                stack[sp - 2] = stack[sp - 2] + stack[sp - 1];
+                sp--;
+                break;
+            case OP_SUB:
+                stack[sp - 2] = stack[sp - 2] - stack[sp - 1];
+                sp--;
+                break;
+            case OP_MUL:
+                stack[sp - 2] = stack[sp - 2] * stack[sp - 1];
+                sp--;
+                break;
+            case OP_DIV:
+                stack[sp - 2] = stack[sp - 2] / stack[sp - 1];
+                sp--;
+                break;
+            case OP_HALT:
+                return;
+        }
+    }
+}
+
+// Computed goto version (much faster!)
+void interpret_goto(uint8_t* bytecode) {
+    static void* dispatch_table[] = {
+        &&op_add, &&op_sub, &&op_mul, &&op_div, &&op_halt
+    };
+
+    int pc = 0;
+    int stack[256];
+    int sp = 0;
+
+    #define DISPATCH() goto *dispatch_table[bytecode[pc++]]
+
+    DISPATCH();
+
+op_add:
+    stack[sp - 2] = stack[sp - 2] + stack[sp - 1];
+    sp--;
+    DISPATCH();
+
+op_sub:
+    stack[sp - 2] = stack[sp - 2] - stack[sp - 1];
+    sp--;
+    DISPATCH();
+
+op_mul:
+    stack[sp - 2] = stack[sp - 2] * stack[sp - 1];
+    sp--;
+    DISPATCH();
+
+op_div:
+    stack[sp - 2] = stack[sp - 2] / stack[sp - 1];
+    sp--;
+    DISPATCH();
+
+op_halt:
+    return;
+}
+// Speedup: 20-30% for interpreter dispatch!
+// Used by: Python, Ruby, Lua VMs
+\end{lstlisting}
+
+\section{Loop Optimization Techniques}
+
+\subsection{Duff's Device}
+
+The most famous loop optimization in C history:
+
+\begin{lstlisting}
+// Standard loop to copy n bytes
+void copy_standard(char* to, char* from, size_t count) {
+    for (size_t i = 0; i < count; i++) {
+        *to++ = *from++;
+    }
+}
+
+// Duff's Device: loop unrolling with switch fallthrough
+void copy_duff(char* to, char* from, size_t count) {
+    size_t n = (count + 7) / 8;  // Number of 8-byte chunks
+    switch (count % 8) {
+        case 0: do { *to++ = *from++;
+        case 7:      *to++ = *from++;
+        case 6:      *to++ = *from++;
+        case 5:      *to++ = *from++;
+        case 4:      *to++ = *from++;
+        case 3:      *to++ = *from++;
+        case 2:      *to++ = *from++;
+        case 1:      *to++ = *from++;
+                } while (--n > 0);
+    }
+}
+// Handles remainder and main loop in one construct!
+
+// Modern version: use memcpy for bulk copies
+// But Duff's device shows the principle of unrolling
+\end{lstlisting}
+
+\subsection{Loop Unrolling}
+
+\begin{lstlisting}
+// Basic loop
+void scale_array(float* arr, float factor, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        arr[i] *= factor;
+    }
+}
+
+// Manual unroll by 4
+void scale_array_unroll4(float* arr, float factor, size_t n) {
+    size_t i = 0;
+
+    // Process 4 elements at a time
+    for (; i + 4 <= n; i += 4) {
+        arr[i + 0] *= factor;
+        arr[i + 1] *= factor;
+        arr[i + 2] *= factor;
+        arr[i + 3] *= factor;
+    }
+
+    // Handle remainder
+    for (; i < n; i++) {
+        arr[i] *= factor;
+    }
+}
+
+// Unroll with independent operations (better ILP)
+void scale_array_unroll_ilp(float* arr, float factor, size_t n) {
+    size_t i = 0;
+
+    for (; i + 4 <= n; i += 4) {
+        float a0 = arr[i + 0] * factor;
+        float a1 = arr[i + 1] * factor;
+        float a2 = arr[i + 2] * factor;
+        float a3 = arr[i + 3] * factor;
+
+        arr[i + 0] = a0;
+        arr[i + 1] = a1;
+        arr[i + 2] = a2;
+        arr[i + 3] = a3;
+    }
+
+    for (; i < n; i++) {
+        arr[i] *= factor;
+    }
+}
+
+// Pragma for compiler unrolling
+void scale_array_pragma(float* arr, float factor, size_t n) {
+    #pragma GCC unroll 8
+    for (size_t i = 0; i < n; i++) {
+        arr[i] *= factor;
+    }
+}
+\end{lstlisting}
+
+\subsection{Loop Fusion and Fission}
+
+\begin{lstlisting}
+// Loop fission: split one loop into multiple
+// Good when operations can't be pipelined together
+
+// Original: poor instruction-level parallelism
+for (int i = 0; i < n; i++) {
+    a[i] = b[i] + c[i];
+    d[i] = a[i] * 2;  // Depends on previous line
+    e[i] = d[i] + 1;  // Depends on previous line
+}
+
+// Fissioned: better for some CPUs
+for (int i = 0; i < n; i++) {
+    a[i] = b[i] + c[i];
+}
+for (int i = 0; i < n; i++) {
+    d[i] = a[i] * 2;
+}
+for (int i = 0; i < n; i++) {
+    e[i] = d[i] + 1;
+}
+
+// Loop fusion: combine multiple loops
+// Good for cache locality
+
+// Original: multiple passes over data
+for (int i = 0; i < n; i++) {
+    a[i] = b[i] + 1;
+}
+for (int i = 0; i < n; i++) {
+    c[i] = a[i] * 2;
+}
+for (int i = 0; i < n; i++) {
+    d[i] = c[i] + a[i];
+}
+
+// Fused: one pass, better cache usage
+for (int i = 0; i < n; i++) {
+    a[i] = b[i] + 1;
+    c[i] = a[i] * 2;
+    d[i] = c[i] + a[i];
+}
+\end{lstlisting}
+
+\subsection{Loop Interchange}
+
+Change loop order for better cache performance:
+
+\begin{lstlisting}
+// Bad: column-major access in row-major array
+for (int j = 0; j < N; j++) {
+    for (int i = 0; i < M; i++) {
+        matrix[i][j] = 0;  // Strided access, cache-unfriendly
+    }
+}
+
+// Good: row-major access
+for (int i = 0; i < M; i++) {
+    for (int j = 0; j < N; j++) {
+        matrix[i][j] = 0;  // Sequential access, cache-friendly
+    }
+}
+
+// Matrix transpose: blocked version
+void transpose_blocked(float** A, float** B, int n) {
+    const int BLOCK = 16;
+    for (int i = 0; i < n; i += BLOCK) {
+        for (int j = 0; j < n; j += BLOCK) {
+            // Transpose block
+            for (int ii = i; ii < i + BLOCK && ii < n; ii++) {
+                for (int jj = j; jj < j + BLOCK && jj < n; jj++) {
+                    B[jj][ii] = A[ii][jj];
+                }
+            }
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Loop Invariant Code Motion}
+
+\begin{lstlisting}
+// Bad: recalculates invariant every iteration
+for (int i = 0; i < n; i++) {
+    for (int j = 0; j < m; j++) {
+        arr[i][j] = sqrt(x * x + y * y) + z;  // x, y, z don't change!
+    }
+}
+
+// Good: calculate invariant once
+double dist = sqrt(x * x + y * y) + z;
+for (int i = 0; i < n; i++) {
+    for (int j = 0; j < m; j++) {
+        arr[i][j] = dist;
+    }
+}
+
+// Common mistake: strlen in loop condition
+for (int i = 0; i < strlen(str); i++) {  // strlen() called every iteration!
+    process(str[i]);
+}
+
+// Fix: cache the length
+size_t len = strlen(str);
+for (size_t i = 0; i < len; i++) {
+    process(str[i]);
+}
+\end{lstlisting}
+
+\subsection{Strength Reduction}
+
+Replace expensive operations with cheaper ones:
+
+\begin{lstlisting}
+// Multiplication to addition
+for (int i = 0; i < n; i++) {
+    arr[i * 4] = value;  // Multiply every iteration
+}
+
+// Better: use pointer arithmetic or addition
+int offset = 0;
+for (int i = 0; i < n; i++) {
+    arr[offset] = value;
+    offset += 4;  // Addition is faster than multiplication
+}
+
+// Division to multiplication (for constants)
+for (int i = 0; i < n; i++) {
+    result[i] = data[i] / 255;  // Division is slow
+}
+
+// Better: multiply by reciprocal
+float inv = 1.0f / 255.0f;
+for (int i = 0; i < n; i++) {
+    result[i] = data[i] * inv;  // Multiplication is fast
+}
+
+// Integer division by power of 2
+int div = x / 8;  // Division instruction
+int div = x >> 3; // Right shift (faster)
+
+// Modulo by power of 2
+int mod = x % 32;   // Division instruction
+int mod = x & 31;   // AND operation (much faster)
+
+// General power-of-2 check
+int is_power_of_2(unsigned int x) {
+    return x && !(x & (x - 1));
+}
+\end{lstlisting}
+
+\section{SIMD: Single Instruction Multiple Data}
+
+Process multiple values simultaneously:
+
+\begin{lstlisting}
+#include <immintrin.h>  // Intel intrinsics
+#include <arm_neon.h>   // ARM NEON intrinsics
+
+// Scalar version: process one float at a time
+void add_arrays_scalar(float* a, float* b, float* c, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+// SSE version: 4 floats at a time (128-bit)
+void add_arrays_sse(float* a, float* b, float* c, size_t n) {
+    size_t i = 0;
+
+    // Process 4 floats at a time
+    for (; i + 4 <= n; i += 4) {
+        __m128 va = _mm_load_ps(&a[i]);
+        __m128 vb = _mm_load_ps(&b[i]);
+        __m128 vc = _mm_add_ps(va, vb);
+        _mm_store_ps(&c[i], vc);
+    }
+
+    // Handle remainder
+    for (; i < n; i++) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+// AVX version: 8 floats at a time (256-bit)
+void add_arrays_avx(float* a, float* b, float* c, size_t n) {
+    size_t i = 0;
+
+    for (; i + 8 <= n; i += 8) {
+        __m256 va = _mm256_load_ps(&a[i]);
+        __m256 vb = _mm256_load_ps(&b[i]);
+        __m256 vc = _mm256_add_ps(va, vb);
+        _mm256_store_ps(&c[i], vc);
+    }
+
+    for (; i < n; i++) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+// AVX-512: 16 floats at a time (512-bit)
+void add_arrays_avx512(float* a, float* b, float* c, size_t n) {
+    size_t i = 0;
+
+    for (; i + 16 <= n; i += 16) {
+        __m512 va = _mm512_load_ps(&a[i]);
+        __m512 vb = _mm512_load_ps(&b[i]);
+        __m512 vc = _mm512_add_ps(va, vb);
+        _mm512_store_ps(&c[i], vc);
+    }
+
+    for (; i < n; i++) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+// Auto-vectorization: let compiler do it
+void add_arrays_auto(float* restrict a,
+                      float* restrict b,
+                      float* restrict c,
+                      size_t n) {
+    // Tell compiler there's no aliasing
+    #pragma GCC ivdep  // ignore vector dependencies
+    for (size_t i = 0; i < n; i++) {
+        c[i] = a[i] + b[i];
+    }
+}
+
+// Horizontal sum using SIMD
+float sum_array_simd(float* arr, size_t n) {
+    __m256 sum_vec = _mm256_setzero_ps();
+    size_t i = 0;
+
+    for (; i + 8 <= n; i += 8) {
+        __m256 v = _mm256_load_ps(&arr[i]);
+        sum_vec = _mm256_add_ps(sum_vec, v);
+    }
+
+    // Horizontal add
+    __m128 sum_high = _mm256_extractf128_ps(sum_vec, 1);
+    __m128 sum_low = _mm256_castps256_ps128(sum_vec);
+    __m128 sum128 = _mm_add_ps(sum_low, sum_high);
+
+    float result[4];
+    _mm_store_ps(result, sum128);
+    float sum = result[0] + result[1] + result[2] + result[3];
+
+    // Add remainder
+    for (; i < n; i++) {
+        sum += arr[i];
+    }
+
+    return sum;
+}
+
+// Detect CPU features at runtime
+#include <cpuid.h>
+
+int has_avx2(void) {
+    unsigned int eax, ebx, ecx, edx;
+    if (!__get_cpuid(7, &eax, &ebx, &ecx, &edx))
+        return 0;
+    return (ebx & bit_AVX2) != 0;
+}
+
+// Function pointer dispatch based on CPU features
+void (*add_arrays)(float*, float*, float*, size_t) = add_arrays_scalar;
+
+void init_simd(void) {
+    if (has_avx2()) {
+        add_arrays = add_arrays_avx;
+    } else {
+        add_arrays = add_arrays_sse;
+    }
+}
+\end{lstlisting}
+
+\section{Memory Management Patterns}
+
+\subsection{Memory Pooling}
+
+Pre-allocate memory to avoid malloc overhead:
+
+\begin{lstlisting}
+// Simple pool allocator
+typedef struct {
+    void* memory;
+    size_t size;
+    size_t used;
+} MemPool;
+
+MemPool* pool_create(size_t size) {
+    MemPool* pool = malloc(sizeof(MemPool));
+    pool->memory = malloc(size);
+    pool->size = size;
+    pool->used = 0;
+    return pool;
+}
+
+void* pool_alloc(MemPool* pool, size_t size) {
+    // Align to 8 bytes
+    size = (size + 7) & ~7;
+
+    if (pool->used + size > pool->size)
+        return NULL;
+
+    void* ptr = (char*)pool->memory + pool->used;
+    pool->used += size;
+    return ptr;
+}
+
+void pool_reset(MemPool* pool) {
+    pool->used = 0;  // Reset pointer, reuse memory
+}
+
+void pool_destroy(MemPool* pool) {
+    free(pool->memory);
+    free(pool);
+}
+
+// Usage: perfect for per-frame allocations in games
+MemPool* frame_pool = pool_create(1024 * 1024);  // 1 MB
+
+void render_frame(void) {
+    // Allocate temporary data
+    float* temp = pool_alloc(frame_pool, 1000 * sizeof(float));
+
+    // Use temp...
+
+    // End of frame: reset pool (no free() calls needed!)
+    pool_reset(frame_pool);
+}
+\end{lstlisting}
+
+\subsection{Arena Allocator}
+
+\begin{lstlisting}
+// Arena: allocate in chunks, free all at once
+typedef struct ArenaBlock {
+    struct ArenaBlock* next;
+    size_t size;
+    size_t used;
+    char data[];  // Flexible array member
+} ArenaBlock;
+
+typedef struct {
+    ArenaBlock* current;
+    size_t block_size;
+} Arena;
+
+Arena* arena_create(size_t block_size) {
+    Arena* arena = malloc(sizeof(Arena));
+    arena->block_size = block_size;
+    arena->current = NULL;
+    return arena;
+}
+
+void* arena_alloc(Arena* arena, size_t size) {
+    // Align to 8 bytes
+    size = (size + 7) & ~7;
+
+    // Need new block?
+    if (!arena->current || arena->current->used + size > arena->current->size) {
+        size_t block_size = (size > arena->block_size) ? size : arena->block_size;
+        ArenaBlock* block = malloc(sizeof(ArenaBlock) + block_size);
+        block->size = block_size;
+        block->used = 0;
+        block->next = arena->current;
+        arena->current = block;
+    }
+
+    void* ptr = arena->current->data + arena->current->used;
+    arena->current->used += size;
+    return ptr;
+}
+
+void arena_destroy(Arena* arena) {
+    ArenaBlock* block = arena->current;
+    while (block) {
+        ArenaBlock* next = block->next;
+        free(block);
+        block = next;
+    }
+    free(arena);
+}
+
+// Usage: parse file, build data structures, process, free all at once
+Arena* arena = arena_create(4096);
+
+void process_file(const char* filename) {
+    // Parse file into arena-allocated structures
+    Node* tree = parse_file(filename, arena);
+
+    // Process the tree...
+
+    // Done: free everything at once
+    arena_destroy(arena);
+}
+\end{lstlisting}
+
+\subsection{Object Pools for Fixed-Size Allocations}
+
+\begin{lstlisting}
+// Free list for objects of the same size
+typedef struct FreeNode {
+    struct FreeNode* next;
+} FreeNode;
+
+typedef struct {
+    void* memory;
+    FreeNode* free_list;
+    size_t obj_size;
+    size_t capacity;
+} ObjectPool;
+
+ObjectPool* objpool_create(size_t obj_size, size_t capacity) {
+    ObjectPool* pool = malloc(sizeof(ObjectPool));
+    pool->obj_size = obj_size;
+    pool->capacity = capacity;
+    pool->memory = malloc(obj_size * capacity);
+
+    // Build free list
+    pool->free_list = NULL;
+    for (size_t i = 0; i < capacity; i++) {
+        void* obj = (char*)pool->memory + i * obj_size;
+        FreeNode* node = (FreeNode*)obj;
+        node->next = pool->free_list;
+        pool->free_list = node;
+    }
+
+    return pool;
+}
+
+void* objpool_alloc(ObjectPool* pool) {
+    if (!pool->free_list)
+        return NULL;  // Pool exhausted
+
+    void* obj = pool->free_list;
+    pool->free_list = pool->free_list->next;
+    return obj;
+}
+
+void objpool_free(ObjectPool* pool, void* obj) {
+    FreeNode* node = (FreeNode*)obj;
+    node->next = pool->free_list;
+    pool->free_list = node;
+}
+
+// Usage: game entities
+ObjectPool* entity_pool = objpool_create(sizeof(Entity), 10000);
+
+Entity* spawn_entity(void) {
+    Entity* e = objpool_alloc(entity_pool);
+    if (e) {
+        init_entity(e);
+    }
+    return e;
+}
+
+void despawn_entity(Entity* e) {
+    objpool_free(entity_pool, e);
+}
+\end{lstlisting}
+
+\subsection{Small String Optimization (SSO)}
+
+\begin{lstlisting}
+// Store short strings inline, allocate for long strings
+#define SSO_SIZE 23
+
+typedef struct {
+    union {
+        struct {
+            char* ptr;
+            size_t len;
+            size_t cap;
+        } heap;
+        struct {
+            char buf[SSO_SIZE];
+            unsigned char len;  // High bit = is_heap
+        } sso;
+    };
+} String;
+
+int string_is_heap(String* s) {
+    return s->sso.len & 0x80;
+}
+
+void string_init(String* s, const char* str) {
+    size_t len = strlen(str);
+
+    if (len < SSO_SIZE) {
+        // Short string: store inline
+        memcpy(s->sso.buf, str, len + 1);
+        s->sso.len = len;
+    } else {
+        // Long string: allocate on heap
+        s->heap.ptr = malloc(len + 1);
+        memcpy(s->heap.ptr, str, len + 1);
+        s->heap.len = len | 0x80;  // Set heap flag
+        s->heap.cap = len + 1;
+    }
+}
+
+const char* string_cstr(String* s) {
+    return string_is_heap(s) ? s->heap.ptr : s->sso.buf;
+}
+
+void string_free(String* s) {
+    if (string_is_heap(s)) {
+        free(s->heap.ptr);
+    }
+}
+
+// Most strings are short - SSO avoids malloc for them!
+// Used by: std::string in C++, many high-performance C libraries
+\end{lstlisting}
+
+\subsection{Slab Allocator (Linux Kernel Pattern)}
+
+\begin{lstlisting}
+// Slab allocator: pre-allocated objects with constructor
+typedef struct Slab {
+    struct Slab* next;
+    size_t obj_size;
+    size_t capacity;
+    size_t used;
+    void* objects;
+} Slab;
+
+typedef void (*ctor_fn)(void*);
+typedef void (*dtor_fn)(void*);
+
+typedef struct {
+    Slab* slabs;
+    size_t obj_size;
+    size_t slab_size;
+    ctor_fn ctor;
+    dtor_fn dtor;
+} SlabCache;
+
+SlabCache* slab_create(size_t obj_size, size_t slab_size,
+                       ctor_fn ctor, dtor_fn dtor) {
+    SlabCache* cache = malloc(sizeof(SlabCache));
+    cache->obj_size = obj_size;
+    cache->slab_size = slab_size;
+    cache->ctor = ctor;
+    cache->dtor = dtor;
+    cache->slabs = NULL;
+    return cache;
+}
+
+void* slab_alloc(SlabCache* cache) {
+    // Find slab with space, or create new one
+    // ... implementation similar to object pool ...
+
+    void* obj = /* allocate from slab */;
+
+    // Call constructor
+    if (cache->ctor) {
+        cache->ctor(obj);
+    }
+
+    return obj;
+}
+
+void slab_free(SlabCache* cache, void* obj) {
+    // Call destructor
+    if (cache->dtor) {
+        cache->dtor(obj);
+    }
+
+    // Return to slab free list
+    // ...
+}
+
+// Constructor: initialize object to ready state
+void task_ctor(void* ptr) {
+    Task* task = ptr;
+    task->state = TASK_READY;
+    task->priority = 0;
+    // Initialize other fields...
+}
+
+// Cache of pre-constructed tasks
+SlabCache* task_cache = slab_create(sizeof(Task), 4096,
+                                    task_ctor, NULL);
+\end{lstlisting}
+
+\section{Bit Manipulation Tricks}
+
+\subsection{Classic Bit Hacks}
+
+\begin{lstlisting}
+// Check if power of 2
+int is_power_of_2(unsigned int x) {
+    return x && !(x & (x - 1));
+}
+
+// Round up to next power of 2
+unsigned int next_power_of_2(unsigned int x) {
+    x--;
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    return x + 1;
+}
+
+// Count trailing zeros (CTZ)
+int count_trailing_zeros(unsigned int x) {
+    return __builtin_ctz(x);  // Compiles to single instruction
+}
+
+// Count leading zeros (CLZ)
+int count_leading_zeros(unsigned int x) {
+    return __builtin_clz(x);
+}
+
+// Count set bits (population count)
+int popcount(unsigned int x) {
+    return __builtin_popcount(x);
+}
+
+// Manually (Brian Kernighan's algorithm)
+int popcount_manual(unsigned int x) {
+    int count = 0;
+    while (x) {
+        x &= x - 1;  // Clear lowest set bit
+        count++;
+    }
+    return count;
+}
+
+// Find lowest set bit
+unsigned int lowest_bit(unsigned int x) {
+    return x & -x;
+}
+
+// Swap two values without temporary
+void swap_xor(int* a, int* b) {
+    *a ^= *b;
+    *b ^= *a;
+    *a ^= *b;
+}
+
+// Absolute value without branch
+int abs_bitwise(int x) {
+    int mask = x >> 31;  // All 1s if negative, all 0s if positive
+    return (x + mask) ^ mask;
+}
+
+// Min/max without branch
+int min_bitwise(int x, int y) {
+    return y ^ ((x ^ y) & -(x < y));
+}
+
+int max_bitwise(int x, int y) {
+    return x ^ ((x ^ y) & -(x < y));
+}
+
+// Sign of integer (-1, 0, 1)
+int sign(int x) {
+    return (x > 0) - (x < 0);
+}
+
+// Check if signs differ
+int opposite_signs(int x, int y) {
+    return (x ^ y) < 0;
+}
+
+// Reverse bits
+unsigned int reverse_bits(unsigned int x) {
+    x = ((x & 0xAAAAAAAA) >> 1) | ((x & 0x55555555) << 1);
+    x = ((x & 0xCCCCCCCC) >> 2) | ((x & 0x33333333) << 2);
+    x = ((x & 0xF0F0F0F0) >> 4) | ((x & 0x0F0F0F0F) << 4);
+    x = ((x & 0xFF00FF00) >> 8) | ((x & 0x00FF00FF) << 8);
+    return (x >> 16) | (x << 16);
+}
+
+// Byte swap (endianness conversion)
+uint32_t bswap32(uint32_t x) {
+    return __builtin_bswap32(x);  // Single instruction
+}
+
+// Parity (even number of set bits?)
+int parity(unsigned int x) {
+    return __builtin_parity(x);
+}
+\end{lstlisting}
+
+\subsection{Bit Fields for Flags}
+
+\begin{lstlisting}
+// Using bit fields for compact flag storage
+typedef struct {
+    unsigned int is_active : 1;
+    unsigned int is_visible : 1;
+    unsigned int has_physics : 1;
+    unsigned int is_static : 1;
+    unsigned int layer : 4;  // 0-15
+    unsigned int unused : 24;
+} EntityFlags;
+
+// Or use explicit bit operations
+#define FLAG_ACTIVE   (1 << 0)
+#define FLAG_VISIBLE  (1 << 1)
+#define FLAG_PHYSICS  (1 << 2)
+#define FLAG_STATIC   (1 << 3)
+
+typedef struct {
+    uint32_t flags;
+} Entity;
+
+void entity_set_flag(Entity* e, uint32_t flag) {
+    e->flags |= flag;
+}
+
+void entity_clear_flag(Entity* e, uint32_t flag) {
+    e->flags &= ~flag;
+}
+
+int entity_has_flag(Entity* e, uint32_t flag) {
+    return (e->flags & flag) != 0;
+}
+
+void entity_toggle_flag(Entity* e, uint32_t flag) {
+    e->flags ^= flag;
+}
+
+// Bit set operations
+typedef struct {
+    uint64_t bits[16];  // 1024 bits
+} BitSet;
+
+void bitset_set(BitSet* bs, int index) {
+    bs->bits[index / 64] |= (1ULL << (index % 64));
+}
+
+void bitset_clear(BitSet* bs, int index) {
+    bs->bits[index / 64] &= ~(1ULL << (index % 64));
+}
+
+int bitset_test(BitSet* bs, int index) {
+    return (bs->bits[index / 64] & (1ULL << (index % 64))) != 0;
+}
+\end{lstlisting}
+
+\subsection{Morton Codes (Z-Order Curve)}
+
+Encode 2D coordinates in a cache-friendly way:
+
+\begin{lstlisting}
+// Interleave bits of x and y coordinates
+uint32_t morton_encode(uint16_t x, uint16_t y) {
+    uint32_t result = 0;
+    for (int i = 0; i < 16; i++) {
+        result |= ((x & (1 << i)) << i) | ((y & (1 << i)) << (i + 1));
+    }
+    return result;
+}
+
+// Fast version using magic numbers
+uint32_t morton_encode_fast(uint16_t x, uint16_t y) {
+    uint32_t xx = x;
+    uint32_t yy = y;
+
+    xx = (xx | (xx << 8)) & 0x00FF00FF;
+    xx = (xx | (xx << 4)) & 0x0F0F0F0F;
+    xx = (xx | (xx << 2)) & 0x33333333;
+    xx = (xx | (xx << 1)) & 0x55555555;
+
+    yy = (yy | (yy << 8)) & 0x00FF00FF;
+    yy = (yy | (yy << 4)) & 0x0F0F0F0F;
+    yy = (yy | (yy << 2)) & 0x33333333;
+    yy = (yy | (yy << 1)) & 0x55555555;
+
+    return xx | (yy << 1);
+}
+
+// Decode
+void morton_decode(uint32_t code, uint16_t* x, uint16_t* y) {
+    uint32_t xx = code & 0x55555555;
+    uint32_t yy = (code >> 1) & 0x55555555;
+
+    xx = (xx | (xx >> 1)) & 0x33333333;
+    xx = (xx | (xx >> 2)) & 0x0F0F0F0F;
+    xx = (xx | (xx >> 4)) & 0x00FF00FF;
+    xx = (xx | (xx >> 8)) & 0x0000FFFF;
+
+    yy = (yy | (yy >> 1)) & 0x33333333;
+    yy = (yy | (yy >> 2)) & 0x0F0F0F0F;
+    yy = (yy | (yy >> 4)) & 0x00FF00FF;
+    yy = (yy >> 8)) & 0x0000FFFF;
+
+    *x = xx;
+    *y = yy;
+}
+
+// Use for spatial data structures
+// Objects near in 2D space have nearby Morton codes
+// -> better cache locality when iterating
+\end{lstlisting}
+
+\section{Function Call Optimization}
+
+\subsection{Inline Functions}
+
+\begin{lstlisting}
+// Small helper functions should be inline
+static inline int min(int a, int b) {
+    return a < b ? a : b;
+}
+
+static inline int max(int a, int b) {
+    return a > b ? a : b;
+}
+
+static inline int clamp(int x, int low, int high) {
+    return min(max(x, low), high);
+}
+
+// Force inline for critical functions
+__attribute__((always_inline))
+static inline void critical_function(void) {
+    // Must be inlined for performance
+}
+
+// Prevent inline (for debugging or code size)
+__attribute__((noinline))
+void debug_function(void) {
+    // Keep as function call
+}
+
+// Hot/cold function hints
+__attribute__((hot))
+void frequently_called(void) {
+    // Compiler optimizes aggressively
+}
+
+__attribute__((cold))
+void error_handler(void) {
+    // Optimize for size, not speed
+}
+
+// Pure function (no side effects, same output for same input)
+__attribute__((pure))
+int compute_value(int x, int y) {
+    return x * x + y * y;
+}
+
+// Const function (pure + doesn't read memory)
+__attribute__((const))
+int add(int a, int b) {
+    return a + b;
+}
+\end{lstlisting}
+
+\subsection{Tail Call Optimization}
+
+\begin{lstlisting}
+// Non-tail recursive (uses stack space)
+int factorial(int n) {
+    if (n <= 1)
+        return 1;
+    return n * factorial(n - 1);  // Can't optimize: multiply after call
+}
+
+// Tail recursive (can be optimized to loop)
+int factorial_tail(int n, int acc) {
+    if (n <= 1)
+        return acc;
+    return factorial_tail(n - 1, n * acc);  // Last operation is call
+}
+
+// Compiler can optimize tail call to:
+int factorial_loop(int n, int acc) {
+    while (n > 1) {
+        acc = n * acc;
+        n = n - 1;
+    }
+    return acc;
+}
+
+// Use -O2 or -O3 to enable tail call optimization
+// Or __attribute__((optimize("O2")))
+\end{lstlisting}
+
+\subsection{Function Pointer Overhead}
+
+\begin{lstlisting}
+// Indirect calls prevent inlining and CPU prediction
+void process_indirect(void (*func)(int), int* data, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        func(data[i]);  // Indirect call, expensive
+    }
+}
+
+// Direct calls can be inlined
+static inline void process_func(int x) {
+    // Do something
+}
+
+void process_direct(int* data, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        process_func(data[i]);  // Direct call, can inline
+    }
+}
+
+// If you need function pointers, batch the calls
+void process_batched(void (*func)(int*, size_t), int* data, size_t n) {
+    const size_t BATCH = 1000;
+    for (size_t i = 0; i < n; i += BATCH) {
+        size_t count = (i + BATCH <= n) ? BATCH : (n - i);
+        func(&data[i], count);  // One indirect call per 1000 items
+    }
+}
+\end{lstlisting}
+
+\section{Algorithm-Level Optimizations}
+
+\subsection{Fast Path for Common Case}
+
+\begin{lstlisting}
+// Optimize for the common case
+int parse_int(const char* str) {
+    // Fast path: single digit (very common)
+    if (str[0] >= '0' && str[0] <= '9' && str[1] == '\0') {
+        return str[0] - '0';
+    }
+
+    // Slow path: general case
+    return atoi(str);
+}
+
+// Fast path for ASCII strings (common case)
+int string_length(const char* str) {
+    // Fast path: ASCII (no multibyte characters)
+    if ((*str & 0x80) == 0) {
+        return strlen(str);
+    }
+
+    // Slow path: UTF-8 (multibyte characters)
+    return utf8_length(str);
+}
+
+// Early exit optimization
+int find_element(int* arr, size_t n, int target) {
+    // Check first element (often finds it immediately)
+    if (n > 0 && arr[0] == target)
+        return 0;
+
+    // Check last element
+    if (n > 1 && arr[n-1] == target)
+        return n - 1;
+
+    // General search
+    for (size_t i = 1; i < n - 1; i++) {
+        if (arr[i] == target)
+            return i;
+    }
+
+    return -1;
+}
+\end{lstlisting}
+
+\subsection{Lookup Tables}
+
+\begin{lstlisting}
+// Compute once, lookup many times
+
+// Example: character classification
+static const unsigned char char_table[256] = {
+    ['0'] = 1, ['1'] = 1, ['2'] = 1, ['3'] = 1, ['4'] = 1,
+    ['5'] = 1, ['6'] = 1, ['7'] = 1, ['8'] = 1, ['9'] = 1,
+    ['a'] = 2, ['b'] = 2, ['c'] = 2, ['d'] = 2, ['e'] = 2, ['f'] = 2,
+    ['A'] = 2, ['B'] = 2, ['C'] = 2, ['D'] = 2, ['E'] = 2, ['F'] = 2,
+    // ... rest are 0
+};
+
+int is_digit(char c) {
+    return char_table[(unsigned char)c] == 1;
+}
+
+int is_hex_digit(char c) {
+    return char_table[(unsigned char)c] != 0;
+}
+
+// Precomputed trig table (classic game dev trick)
+#define TRIG_TABLE_SIZE 360
+
+float sin_table[TRIG_TABLE_SIZE];
+float cos_table[TRIG_TABLE_SIZE];
+
+void init_trig_table(void) {
+    for (int i = 0; i < TRIG_TABLE_SIZE; i++) {
+        float angle = i * (M_PI / 180.0f);
+        sin_table[i] = sinf(angle);
+        cos_table[i] = cosf(angle);
+    }
+}
+
+float fast_sin(int degrees) {
+    degrees = degrees % 360;
+    if (degrees < 0) degrees += 360;
+    return sin_table[degrees];
+}
+
+// Square root approximation table
+float sqrt_table[1000];
+
+void init_sqrt_table(void) {
+    for (int i = 0; i < 1000; i++) {
+        sqrt_table[i] = sqrtf(i);
+    }
+}
+
+float fast_sqrt(float x) {
+    if (x < 1000) {
+        int index = (int)x;
+        float frac = x - index;
+        return sqrt_table[index] + frac * (sqrt_table[index+1] - sqrt_table[index]);
+    }
+    return sqrtf(x);
+}
+\end{lstlisting}
+
+\subsection{Lazy Evaluation and Caching}
+
+\begin{lstlisting}
+// Compute expensive values only when needed
+
+typedef struct {
+    float x, y, z;
+    float length;  // Cached
+    int length_valid;
+} Vector;
+
+float vector_length(Vector* v) {
+    if (!v->length_valid) {
+        v->length = sqrtf(v->x * v->x + v->y * v->y + v->z * v->z);
+        v->length_valid = 1;
+    }
+    return v->length;
+}
+
+void vector_set(Vector* v, float x, float y, float z) {
+    v->x = x;
+    v->y = y;
+    v->z = z;
+    v->length_valid = 0;  // Invalidate cache
+}
+
+// Memoization for recursive functions
+typedef struct {
+    int n;
+    int result;
+} FibCache;
+
+FibCache fib_cache[100];
+int fib_cache_size = 0;
+
+int fibonacci(int n) {
+    // Check cache
+    for (int i = 0; i < fib_cache_size; i++) {
+        if (fib_cache[i].n == n)
+            return fib_cache[i].result;
+    }
+
+    // Compute
+    int result;
+    if (n <= 1)
+        result = n;
+    else
+        result = fibonacci(n - 1) + fibonacci(n - 2);
+
+    // Store in cache
+    if (fib_cache_size < 100) {
+        fib_cache[fib_cache_size].n = n;
+        fib_cache[fib_cache_size].result = result;
+        fib_cache_size++;
+    }
+
+    return result;
+}
+\end{lstlisting}
+
+\subsection{Sentinel Values}
+
+Eliminate loop bound checks:
+
+\begin{lstlisting}
+// Without sentinel: two comparisons per iteration
+int find_linear(int* arr, int n, int target) {
+    for (int i = 0; i < n; i++) {  // Check i < n
+        if (arr[i] == target)      // Check value
+            return i;
+    }
+    return -1;
+}
+
+// With sentinel: one comparison per iteration
+int find_sentinel(int* arr, int n, int target) {
+    int last = arr[n - 1];  // Save last element
+    arr[n - 1] = target;    // Place sentinel
+
+    int i = 0;
+    while (arr[i] != target)  // Only one check!
+        i++;
+
+    arr[n - 1] = last;  // Restore last element
+
+    if (i < n - 1 || last == target)
+        return i;
+    return -1;
+}
+
+// Sentinel in linked list
+typedef struct Node {
+    int data;
+    struct Node* next;
+} Node;
+
+// Add sentinel at end
+Node sentinel;
+sentinel.data = target;
+sentinel.next = NULL;
+
+Node* find_list(Node* head, int target) {
+    // No need to check for NULL!
+    while (head->data != target)
+        head = head->next;
+
+    return (head != &sentinel) ? head : NULL;
+}
+\end{lstlisting}
+
+\section{String Optimization}
+
+\subsection{Avoiding strlen in Loops}
+
+\begin{lstlisting}
+// Bad: O(n^2) due to strlen calls
+void process_bad(char* str) {
+    for (int i = 0; i < strlen(str); i++) {  // strlen is O(n)!
+        process_char(str[i]);
+    }
+}
+
+// Good: O(n) - cache length
+void process_good(char* str) {
+    size_t len = strlen(str);
+    for (size_t i = 0; i < len; i++) {
+        process_char(str[i]);
+    }
+}
+
+// Best: iterate to null terminator
+void process_best(char* str) {
+    for (char* p = str; *p; p++) {
+        process_char(*p);
+    }
+}
+\end{lstlisting}
+
+\subsection{String Building}
+
+\begin{lstlisting}
+// Bad: repeated reallocation
+char* build_string_bad(char** words, int count) {
+    char* result = strdup("");
+    for (int i = 0; i < count; i++) {
+        char* temp = malloc(strlen(result) + strlen(words[i]) + 2);
+        sprintf(temp, "%s %s", result, words[i]);
+        free(result);
+        result = temp;
+    }
+    return result;
+}
+
+// Good: pre-calculate size
+char* build_string_good(char** words, int count) {
+    // Calculate total size
+    size_t total = 0;
+    for (int i = 0; i < count; i++) {
+        total += strlen(words[i]) + 1;  // +1 for space
+    }
+
+    // Allocate once
+    char* result = malloc(total);
+    char* p = result;
+
+    // Copy strings
+    for (int i = 0; i < count; i++) {
+        if (i > 0) *p++ = ' ';
+        size_t len = strlen(words[i]);
+        memcpy(p, words[i], len);
+        p += len;
+    }
+    *p = '\0';
+
+    return result;
+}
+
+// String builder with growth strategy
+typedef struct {
+    char* data;
+    size_t len;
+    size_t cap;
+} StringBuilder;
+
+void sb_append(StringBuilder* sb, const char* str) {
+    size_t str_len = strlen(str);
+
+    // Grow if needed
+    if (sb->len + str_len >= sb->cap) {
+        sb->cap = (sb->cap + str_len) * 2;
+        sb->data = realloc(sb->data, sb->cap);
+    }
+
+    memcpy(sb->data + sb->len, str, str_len);
+    sb->len += str_len;
+    sb->data[sb->len] = '\0';
+}
+\end{lstlisting}
+
+\subsection{Fast String Comparison}
+
+\begin{lstlisting}
+// strcmp is optimized, but you can do better for special cases
+
+// Compare first, they're often different
+int string_equal_fast(const char* a, const char* b) {
+    // Quick checks
+    if (a == b) return 1;
+    if (*a != *b) return 0;  // First char different
+
+    return strcmp(a, b) == 0;
+}
+
+// Known-length comparison
+int string_equal_n(const char* a, const char* b, size_t len) {
+    return memcmp(a, b, len) == 0;  // memcmp is fast
+}
+
+// Compare 8 bytes at a time
+int string_equal_fast8(const char* a, const char* b, size_t len) {
+    const uint64_t* a64 = (const uint64_t*)a;
+    const uint64_t* b64 = (const uint64_t*)b;
+
+    size_t i = 0;
+    for (; i + 8 <= len; i += 8) {
+        if (*a64++ != *b64++)
+            return 0;
+    }
+
+    // Handle remainder
+    for (; i < len; i++) {
+        if (a[i] != b[i])
+            return 0;
+    }
+
+    return 1;
+}
+\end{lstlisting}
+
+\section{I/O Optimization}
+
+\subsection{Buffering}
+
+\begin{lstlisting}
+// Unbuffered: system call per byte (extremely slow)
+void write_unbuffered(int fd, const char* data, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        write(fd, &data[i], 1);  // 1 byte at a time!
+    }
+}
+
+// Buffered: accumulate data, write in chunks
+#define BUFFER_SIZE 4096
+
+typedef struct {
+    int fd;
+    char buffer[BUFFER_SIZE];
+    size_t pos;
+} BufferedWriter;
+
+void bw_write(BufferedWriter* bw, const char* data, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        bw->buffer[bw->pos++] = data[i];
+
+        if (bw->pos == BUFFER_SIZE) {
+            write(bw->fd, bw->buffer, BUFFER_SIZE);
+            bw->pos = 0;
+        }
+    }
+}
+
+void bw_flush(BufferedWriter* bw) {
+    if (bw->pos > 0) {
+        write(bw->fd, bw->buffer, bw->pos);
+        bw->pos = 0;
+    }
+}
+
+// Use stdio (already buffered)
+FILE* f = fopen("file.txt", "w");
+setvbuf(f, NULL, _IOFBF, BUFFER_SIZE);  // Full buffering
+\end{lstlisting}
+
+\subsection{Memory-Mapped Files}
+
+For large files, memory mapping is faster:
+
+\begin{lstlisting}
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+// Traditional read: copy from kernel to user space
+void process_file_read(const char* filename) {
+    int fd = open(filename, O_RDONLY);
+    struct stat st;
+    fstat(fd, &st);
+
+    char* buffer = malloc(st.st_size);
+    read(fd, buffer, st.st_size);  // Copy!
+
+    // Process buffer...
+
+    free(buffer);
+    close(fd);
+}
+
+// Memory-mapped: direct access to file data
+void process_file_mmap(const char* filename) {
+    int fd = open(filename, O_RDONLY);
+    struct stat st;
+    fstat(fd, &st);
+
+    // Map file into memory
+    char* data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+
+    // Access data directly (no copy!)
+    // OS handles paging automatically
+
+    // Advise kernel about access pattern
+    madvise(data, st.st_size, MADV_SEQUENTIAL);
+
+    // Process data...
+
+    munmap(data, st.st_size);
+    close(fd);
+}
+
+// Write with mmap (for random access)
+void update_file_mmap(const char* filename, size_t offset, const void* data, size_t len) {
+    int fd = open(filename, O_RDWR);
+    struct stat st;
+    fstat(fd, &st);
+
+    char* mapped = mmap(NULL, st.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+
+    memcpy(mapped + offset, data, len);  // Direct write
+
+    munmap(mapped, st.st_size);
+    close(fd);
+}
+\end{lstlisting}
+
+\subsection{Vectored I/O}
+
+Gather/scatter I/O for non-contiguous buffers:
+
+\begin{lstlisting}
+#include <sys/uio.h>
+
+// Write multiple buffers in one system call
+void write_vectored(int fd, char* header, size_t hlen,
+                    char* body, size_t blen,
+                    char* footer, size_t flen) {
+    struct iovec iov[3];
+
+    iov[0].iov_base = header;
+    iov[0].iov_len = hlen;
+    iov[1].iov_base = body;
+    iov[1].iov_len = blen;
+    iov[2].iov_base = footer;
+    iov[2].iov_len = flen;
+
+    writev(fd, iov, 3);  // One system call instead of three!
+}
+\end{lstlisting}
+
+\section{Compiler Optimizations}
+
+\subsection{Understanding Optimization Levels}
+
+\begin{lstlisting}
+// Compiler flags:
+// -O0: No optimization (default, debugging)
+// -O1: Basic optimizations (constant folding, dead code elimination)
+// -O2: Recommended (adds inlining, CSE, loop optimizations)
+// -O3: Aggressive (vectorization, unrolling, more inlining)
+// -Os: Optimize for size
+// -Ofast: -O3 + fast math (may break IEEE 754 compliance)
+
+// Example: compile with maximum optimization
+// gcc -O3 -march=native -flto program.c -o program
+
+// -march=native: use all CPU instructions available
+// -flto: link-time optimization
+\end{lstlisting}
+
+\subsection{Link-Time Optimization (LTO)}
+
+\begin{lstlisting}
+// Traditionally: optimize each file separately
+// gcc -O3 -c file1.c -o file1.o
+// gcc -O3 -c file2.c -o file2.o
+// gcc file1.o file2.o -o program
+
+// With LTO: optimize across all files
+// gcc -O3 -flto -c file1.c -o file1.o
+// gcc -O3 -flto -c file2.c -o file2.o
+// gcc -flto file1.o file2.o -o program
+
+// Benefits:
+// - Inline functions across files
+// - Dead code elimination across files
+// - Better optimization of function calls
+// - Typically 5-15% speedup
+\end{lstlisting}
+
+\subsection{Profile-Guided Optimization (PGO)}
+
+\begin{lstlisting}
+// Step 1: Compile with profiling instrumentation
+// gcc -O2 -fprofile-generate program.c -o program
+
+// Step 2: Run with typical workload
+// ./program < typical_input.txt
+// This creates .gcda files with profile data
+
+// Step 3: Recompile using profile data
+// gcc -O2 -fprofile-use program.c -o program
+
+// Compiler now knows:
+// - Which branches are taken most often
+// - Which functions are called most
+// - Which loops iterate many times
+// Result: 10-30% speedup for branch-heavy code!
+
+// Real example: used by Firefox, Chrome, GCC itself
+\end{lstlisting}
+
+\subsection{Function Attributes}
+
+\begin{lstlisting}
+// Tell compiler about function properties
+
+// Pure: same inputs always produce same output, no side effects
+__attribute__((pure))
+int compute_hash(const char* str) {
+    // Only reads memory, doesn't modify
+    int hash = 0;
+    while (*str) hash = hash * 31 + *str++;
+    return hash;
+}
+
+// Const: like pure, but doesn't even read memory
+__attribute__((const))
+int add(int a, int b) {
+    return a + b;  // Only depends on arguments
+}
+
+// Compiler can cache results of pure/const functions!
+
+// Malloc: returns new memory
+__attribute__((malloc))
+void* my_alloc(size_t size) {
+    return malloc(size);
+}
+
+// Returns non-null
+__attribute__((returns_nonnull))
+void* must_succeed_alloc(size_t size) {
+    void* ptr = malloc(size);
+    if (!ptr) abort();
+    return ptr;
+}
+
+// Warn if result is ignored
+__attribute__((warn_unused_result))
+int important_function(void) {
+    return 42;
+}
+
+// Function doesn't return
+__attribute__((noreturn))
+void fatal_error(const char* msg) {
+    fprintf(stderr, "Fatal: %s\n", msg);
+    exit(1);
+}
+
+// Alias: two names for same function
+int foo(int x) { return x * 2; }
+int bar(int x) __attribute__((alias("foo")));
+\end{lstlisting}
+
+\subsection{Restrict Keyword}
+
+Tell compiler about pointer aliasing:
+
+\begin{lstlisting}
+// Without restrict: compiler assumes pointers might overlap
+void copy(int* dst, int* src, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        dst[i] = src[i];
+        // Compiler must reload src[i] each time
+        // (dst[i] write might have changed src[i+1])
+    }
+}
+
+// With restrict: pointers don't overlap
+void copy_fast(int* restrict dst, int* restrict src, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        dst[i] = src[i];
+        // Compiler can vectorize, reorder, optimize
+    }
+}
+
+// Real impact: memcpy uses restrict internally
+void* memcpy(void* restrict dst, const void* restrict src, size_t n);
+
+// Example: vector operations
+void vector_add(float* restrict out,
+                const float* restrict a,
+                const float* restrict b,
+                size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        out[i] = a[i] + b[i];
+    }
+}
+// With restrict: compiler auto-vectorizes with SIMD
+// Without restrict: scalar code only
+\end{lstlisting}
+
+\section{Assembly and Low-Level Tricks}
+
+\subsection{Inline Assembly}
+
+\begin{lstlisting}
+// For truly critical code, use assembly
+
+// Read CPU timestamp counter
+static inline uint64_t rdtsc(void) {
+    uint32_t lo, hi;
+    __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+// Atomic compare-and-swap
+static inline int cas(int* ptr, int old_val, int new_val) {
+    int result;
+    __asm__ __volatile__ (
+        "lock cmpxchgl %2, %1"
+        : "=a"(result), "+m"(*ptr)
+        : "r"(new_val), "0"(old_val)
+        : "memory"
+    );
+    return result == old_val;
+}
+
+// CPU pause instruction (for spin loops)
+static inline void cpu_pause(void) {
+    __asm__ __volatile__ ("pause" ::: "memory");
+}
+
+// Memory fence
+static inline void memory_barrier(void) {
+    __asm__ __volatile__ ("mfence" ::: "memory");
+}
+\end{lstlisting}
+
+\subsection{Reading Compiler Output}
+
+\begin{lstlisting}
+// Generate assembly to see what compiler does
+// gcc -S -O3 file.c -o file.s
+
+// Or use online tools: godbolt.org (Compiler Explorer)
+
+// Example: check if loop vectorized
+void scale(float* arr, float factor, int n) {
+    for (int i = 0; i < n; i++) {
+        arr[i] *= factor;
+    }
+}
+
+// Look for SIMD instructions in assembly:
+// movaps, mulps (SSE)
+// vmovaps, vmulps (AVX)
+// vmovups, vmulps (AVX-512)
+
+// If you see only scalar: movss, mulss
+// -> loop didn't vectorize, investigate why!
+\end{lstlisting}
+
+\section{Profiling and Measurement}
+
+\subsection{Timing Code}
+
+\begin{lstlisting}
+#include <time.h>
+
+// Simple timing with clock()
+double time_function(void (*func)(void)) {
+    clock_t start = clock();
+    func();
+    clock_t end = clock();
+    return (double)(end - start) / CLOCKS_PER_SEC;
+}
+
+// High-resolution timing
+#include <sys/time.h>
+
+double get_time_usec(void) {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return tv.tv_sec * 1e6 + tv.tv_usec;
+}
+
+// Modern: clock_gettime (nanosecond resolution)
+#include <time.h>
+
+uint64_t get_time_nsec(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+}
+
+// Benchmark with warm-up and multiple iterations
+double benchmark(void (*func)(void), int iterations) {
+    // Warm up (fill caches)
+    func();
+    func();
+
+    uint64_t start = get_time_nsec();
+
+    for (int i = 0; i < iterations; i++) {
+        func();
+    }
+
+    uint64_t end = get_time_nsec();
+    return (double)(end - start) / iterations;
+}
+
+// Use CPU timestamp counter for cycle-accurate timing
+uint64_t measure_cycles(void (*func)(void)) {
+    uint64_t start = rdtsc();
+    func();
+    uint64_t end = rdtsc();
+    return end - start;
+}
+\end{lstlisting}
+
+\subsection{Using gprof}
+
+\begin{lstlisting}
+// Step 1: Compile with profiling
+// gcc -pg -O2 program.c -o program
+
+// Step 2: Run program
+// ./program
+
+// Step 3: Analyze profile
+// gprof program gmon.out > profile.txt
+
+// Shows:
+// - Flat profile: time spent in each function
+// - Call graph: who calls whom, how often
+// - Annotated source: time per line
+
+// Example output:
+//   %   cumulative   self              self     total
+//  time   seconds   seconds    calls  ms/call  ms/call  name
+//  60.00      0.60     0.60   100000     0.01     0.01  process_data
+//  30.00      0.90     0.30        1   300.00   900.00  main
+//  10.00      1.00     0.10    10000     0.01     0.01  helper_func
+\end{lstlisting}
+
+\subsection{Using perf (Linux)}
+
+\begin{lstlisting}
+// Record performance data
+// perf record -g ./program
+
+// View report
+// perf report
+
+// Sample specific events
+// perf stat -e cache-misses,cache-references,branches,branch-misses ./program
+
+// Example output:
+//  Performance counter stats for './program':
+//
+//         1,234,567      cache-misses
+//        10,234,567      cache-references    # 12.06 % cache miss rate
+//       100,234,567      branches
+//         2,345,678      branch-misses       #  2.34% of all branches
+//
+//       1.234567890 seconds time elapsed
+
+// Profile specific CPU events
+// perf stat -e L1-dcache-load-misses,L1-dcache-loads ./program
+
+// Annotate source with profile data
+// perf annotate function_name
+
+// See which lines cause cache misses
+// perf record -e cache-misses ./program
+// perf annotate
+\end{lstlisting}
+
+\subsection{Using Valgrind Cachegrind}
+
+\begin{lstlisting}
+// Profile cache behavior
+// valgrind --tool=cachegrind ./program
+
+// Output file: cachegrind.out.PID
+
+// Analyze
+// cg_annotate cachegrind.out.12345
+
+// Shows:
+// - L1 instruction cache misses
+// - L1 data cache misses
+// - L3/LLC cache misses
+// - Per-function and per-line statistics
+
+// Visualize
+// kcachegrind cachegrind.out.12345
+\end{lstlisting}
+
+\section{Platform-Specific Optimizations}
+
+\subsection{CPU Feature Detection}
+
+\begin{lstlisting}
+#include <cpuid.h>
+
+typedef struct {
+    int has_sse;
+    int has_sse2;
+    int has_sse3;
+    int has_ssse3;
+    int has_sse4_1;
+    int has_sse4_2;
+    int has_avx;
+    int has_avx2;
+    int has_avx512;
+    int has_popcnt;
+    int has_bmi1;
+    int has_bmi2;
+} CpuFeatures;
+
+void detect_cpu_features(CpuFeatures* feat) {
+    unsigned int eax, ebx, ecx, edx;
+
+    // CPUID function 1
+    __get_cpuid(1, &eax, &ebx, &ecx, &edx);
+
+    feat->has_sse = (edx & bit_SSE) != 0;
+    feat->has_sse2 = (edx & bit_SSE2) != 0;
+    feat->has_sse3 = (ecx & bit_SSE3) != 0;
+    feat->has_ssse3 = (ecx & bit_SSSE3) != 0;
+    feat->has_sse4_1 = (ecx & bit_SSE4_1) != 0;
+    feat->has_sse4_2 = (ecx & bit_SSE4_2) != 0;
+    feat->has_avx = (ecx & bit_AVX) != 0;
+    feat->has_popcnt = (ecx & bit_POPCNT) != 0;
+
+    // CPUID function 7
+    __get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx);
+
+    feat->has_avx2 = (ebx & bit_AVX2) != 0;
+    feat->has_bmi1 = (ebx & bit_BMI) != 0;
+    feat->has_bmi2 = (ebx & bit_BMI2) != 0;
+    feat->has_avx512 = (ebx & bit_AVX512F) != 0;
+}
+
+// Function pointers for runtime dispatch
+void (*process_array)(float*, size_t);
+
+void init_dispatch(void) {
+    CpuFeatures feat;
+    detect_cpu_features(&feat);
+
+    if (feat.has_avx2) {
+        process_array = process_array_avx2;
+    } else if (feat.has_sse4_2) {
+        process_array = process_array_sse4;
+    } else {
+        process_array = process_array_scalar;
+    }
+}
+\end{lstlisting}
+
+\subsection{Huge Pages}
+
+\begin{lstlisting}
+// Huge pages reduce TLB misses for large allocations
+
+#include <sys/mman.h>
+
+// Allocate with huge pages (Linux)
+void* alloc_huge(size_t size) {
+    void* ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB,
+                     -1, 0);
+    if (ptr == MAP_FAILED) {
+        // Fallback to normal pages
+        ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    }
+    return ptr;
+}
+
+// Or use transparent huge pages (automatic)
+// Check: cat /sys/kernel/mm/transparent_hugepage/enabled
+
+// Benefit: 2MB pages instead of 4KB
+// -> 512x fewer TLB entries needed
+// -> Significant speedup for large data structures
+\end{lstlisting}
+
+\section{Real-World Performance Patterns}
+
+\subsection{SQLite Optimizations}
+
+\begin{lstlisting}
+// Lessons from SQLite (one of the most optimized C codebases):
+
+// 1. Small string optimization
+typedef struct Mem {
+    union {
+        double r;      // Real value
+        i64 i;         // Integer value
+        char* z;       // String (heap-allocated)
+        struct {       // Small string (inline)
+            char buf[32];
+            u8 len;
+        } sso;
+    } u;
+    u16 flags;
+} Mem;
+
+// 2. Custom allocators for each subsystem
+// - Lookaside allocator for small objects
+// - Scratch allocator for temporary data
+// - Page cache for database pages
+
+// 3. Computed goto for bytecode interpreter (see earlier section)
+
+// 4. Careful use of likely/unlikely
+if (likely(p->nAlloc >= p->nChar + N)) {
+    // Fast path
+} else {
+    // Slow reallocation path
+}
+
+// 5. Minimize cache misses with locality
+// Store frequently-accessed fields first in structs
+\end{lstlisting}
+
+\subsection{Redis Optimizations}
+
+\begin{lstlisting}
+// Lessons from Redis (in-memory database):
+
+// 1. SDS: Simple Dynamic String with header
+typedef struct {
+    uint8_t len;      // Current length (1 byte for short strings)
+    uint8_t alloc;    // Allocated capacity
+    char buf[];       // Inline string data
+} sdshdr8;
+
+// 2. Ziplist: compact list for small lists
+// Instead of linked list of objects, use:
+// [total-bytes][tail-offset][len][entry1][entry2]...[end]
+// Saves pointer overhead, better cache locality
+
+// 3. Lazy free: don't block on large deletes
+// Mark for deletion, free in background thread
+
+// 4. Event loop optimization
+// Avoid syscalls: batch socket reads/writes
+
+// 5. Memory-efficient encodings
+// Small integers: store as immediate values, not pointers
+// Small strings: embed in object, not allocated
+\end{lstlisting}
+
+\subsection{Linux Kernel Patterns}
+
+\begin{lstlisting}
+// Lessons from Linux kernel:
+
+// 1. Likely/unlikely everywhere
+if (unlikely(error))
+    goto out;
+
+// 2. Per-CPU data structures (avoid cache bouncing)
+DEFINE_PER_CPU(struct mystruct, myvar);
+get_cpu_var(myvar);  // Access on current CPU
+put_cpu_var(myvar);
+
+// 3. RCU (Read-Copy-Update) for scalable reads
+// Readers never block, writers copy-modify-replace
+
+// 4. Object pools (slab allocator)
+// Pre-constructed objects, cache-aligned
+
+// 5. Inline assembly for critical paths
+static __always_inline void spin_lock(spinlock_t *lock) {
+    asm volatile(
+        "1: lock; decb %0\n\t"
+        "jns 3f\n"
+        "2: pause\n\t"
+        "cmpb $0, %0\n\t"
+        "jle 2b\n\t"
+        "jmp 1b\n"
+        "3:"
+        : "+m" (lock->slock)
+        :: "memory"
+    );
+}
+\end{lstlisting}
+
+\section{Anti-Patterns: What NOT to Do}
+
+\begin{lstlisting}
+// 1. Premature optimization
+// Don't optimize before profiling!
+
+// 2. Micro-optimizing cold code
+void load_config(void) {
+    // This runs once at startup
+    // Don't waste time optimizing it!
+}
+
+// 3. Sacrificing readability
+// Bad: unreadable "optimization"
+int x = (a & 0x80) ? ~((a ^ 0xFF) + 1) : a;
+// Good: clear code (compiler optimizes anyway)
+int x = abs(a);
+
+// 4. Ignoring the profiler
+// Your intuition is wrong. Measure first!
+
+// 5. Optimizing the wrong thing
+// 90% of time is in one function?
+// Optimize that function, not the other 100!
+
+// 6. Breaking portability for tiny gains
+// Don't use inline assembly unless you measured 10%+ improvement
+
+// 7. Over-engineering
+// Simple O(n) might beat complex O(log n) for small n
+
+// 8. Copying "optimizations" without understanding
+// Every codebase is different. Profile YOUR code!
+\end{lstlisting}
+
+\section{Checklist: Making Code Fast}
+
+\begin{enumerate}
+    \item \textbf{Profile first}: Use gprof, perf, or valgrind
+    \item \textbf{Fix algorithms}: O(n log n) beats optimized O(n²)
+    \item \textbf{Cache locality}: Sequential access, avoid pointer chasing
+    \item \textbf{Reduce allocations}: Pool, arena, or stack allocation
+    \item \textbf{Compiler flags}: -O3 -march=native -flto
+    \item \textbf{Minimize branches}: Use branchless code or likely/unlikely
+    \item \textbf{Vectorize}: Help compiler with restrict, or use SIMD intrinsics
+    \item \textbf{Inline hot functions}: Small, frequently called functions
+    \item \textbf{Lookup tables}: Precompute expensive operations
+    \item \textbf{Fast paths}: Optimize the common case
+    \item \textbf{Profile again}: Verify your optimizations worked!
+\end{enumerate}
+
+\section{Summary}
+
+Performance optimization in C is about understanding the hardware and helping the compiler help you. The key principles:
+
+\begin{itemize}
+    \item \textbf{Cache is king}: Sequential access beats random by 100x
+    \item \textbf{Profile everything}: Measure, don't guess
+    \item \textbf{Algorithm matters most}: O(n) beats optimized O(n²)
+    \item \textbf{Help the compiler}: Use restrict, const, inline, pure
+    \item \textbf{Minimize allocations}: Use pools, arenas, stack
+    \item \textbf{Branch prediction}: Use likely/unlikely, or go branchless
+    \item \textbf{SIMD for parallelism}: 4-16x speedup for data-parallel code
+    \item \textbf{Optimize hot paths only}: 90/10 rule—90\% of time in 10\% of code
+    \item \textbf{Maintain readability}: Clear code that's 95\% fast beats unreadable code that's 100\% fast
+\end{itemize}
+
+The best C programmers don't just write fast code—they write correct, maintainable code that's fast where it matters. Profile first, optimize second, and measure everything!
+
+\begin{tipbox}
+\textbf{Remember:} ``Premature optimization is the root of all evil.'' — Donald Knuth
+
+But also: ``We should forget about small efficiencies, say about 97\% of the time... yet we should not pass up our opportunities in that critical 3\%.'' — The rest of that quote!
+\end{tipbox}
+
+\section{Legendary Optimizations from History}
+
+These are real stories of performance optimizations that made history. Each one demonstrates a specific technique that led to massive speedups in production systems.
+
+\subsection{Legend 1: id Software's Quake - Fast Inverse Square Root}
+
+One of the most famous optimizations in gaming history:
+
+\begin{lstlisting}
+// Quake III Arena (1999)
+// Calculate 1/sqrt(x) without division or sqrt()
+// Used for vector normalization in 3D graphics
+
+float Q_rsqrt(float number) {
+    long i;
+    float x2, y;
+    const float threehalfs = 1.5F;
+
+    x2 = number * 0.5F;
+    y  = number;
+    i  = * ( long * ) &y;                       // Evil floating point bit hack
+    i  = 0x5f3759df - ( i >> 1 );               // What the fuck?
+    y  = * ( float * ) &i;
+    y  = y * ( threehalfs - ( x2 * y * y ) );   // 1st Newton-Raphson iteration
+//  y  = y * ( threehalfs - ( x2 * y * y ) );   // 2nd iteration (optional)
+
+    return y;
+}
+
+// Traditional method: ~30-40 cycles
+// This method: ~10 cycles
+// Speedup: 3-4x faster!
+
+// Why it worked:
+// - Clever bit manipulation estimates sqrt
+// - One Newton-Raphson iteration refines it
+// - Good enough for graphics (99.8% accurate)
+
+// Impact: Enabled smooth 3D graphics on 1990s hardware
+// Used in: Quake III, Unreal, countless games
+
+// Modern note: CPUs now have RSQRTSS instruction (even faster)
+// But this remains a legendary example of creative optimization
+\end{lstlisting}
+
+\subsection{Legend 2: Linux Kernel - RCU (Read-Copy-Update)}
+
+Revolutionary synchronization mechanism (2002):
+
+\begin{lstlisting}
+// Problem: rwlock causes cache-line bouncing
+// Readers acquire lock -> cache line invalidated on all CPUs
+
+// Traditional rwlock
+struct data {
+    int value;
+    rwlock_t lock;
+};
+
+void reader(struct data* d) {
+    read_lock(&d->lock);     // Cache miss on every read!
+    int v = d->value;
+    read_unlock(&d->lock);   // Another cache miss!
+}
+
+void writer(struct data* d, int new_val) {
+    write_lock(&d->lock);
+    d->value = new_val;
+    write_unlock(&d->lock);
+}
+
+// RCU: readers never block, no cache bouncing
+struct data {
+    int value;
+};
+
+void reader_rcu(struct data* d) {
+    rcu_read_lock();         // No atomic ops, just barrier
+    struct data* p = rcu_dereference(d);
+    int v = p->value;        // Direct read, no cache ping-pong
+    rcu_read_unlock();       // Just a barrier
+}
+
+void writer_rcu(struct data** d, int new_val) {
+    struct data* new = malloc(sizeof(struct data));
+    new->value = new_val;
+    rcu_assign_pointer(*d, new);  // Atomic pointer swap
+    synchronize_rcu();             // Wait for readers
+    free(old);                     // Safe to free
+}
+
+// Performance impact:
+// - Readers: 10-100x faster (no cache bouncing)
+// - Scales to 100+ CPUs
+// - Network stack speedup: 40%
+// - VFS (filesystem) speedup: 60%
+
+// Used in: Linux kernel (routing tables, file descriptor lookup)
+// Invented by: Paul McKenney, IBM
+// Impact: Made Linux scale to massive servers
+\end{lstlisting}
+
+\subsection{Legend 3: zlib - Huffman Coding Table Optimization}
+
+Mark Adler's zlib optimization (1995):
+
+\begin{lstlisting}
+// Original: decode one bit at a time
+int decode_symbol_slow(bitstream* bs, tree* t) {
+    node* n = t->root;
+    while (!n->is_leaf) {
+        int bit = read_bit(bs);
+        n = bit ? n->right : n->left;
+    }
+    return n->symbol;
+}
+
+// Optimized: decode multiple bits at once with lookup table
+#define LOOKUP_BITS 9  // Decode 9 bits at once
+
+int decode_symbol_fast(bitstream* bs, tree* t) {
+    // Peek 9 bits
+    int bits = peek_bits(bs, LOOKUP_BITS);
+
+    // Table lookup gives symbol + bit count
+    int entry = t->table[bits];
+    int len = entry & 0xF;
+    int symbol = entry >> 4;
+
+    consume_bits(bs, len);
+    return symbol;
+}
+
+// Build the table (done once at startup)
+void build_table(tree* t) {
+    // For every possible 9-bit sequence
+    for (int i = 0; i < 512; i++) {
+        // Trace through tree to find symbol
+        // Store symbol and path length
+        t->table[i] = (symbol << 4) | len;
+    }
+}
+
+// Performance:
+// Before: 8-15 cycles per symbol
+// After: 2-4 cycles per symbol
+// Speedup: 3-5x faster decompression
+
+// Memory cost: 512 * 2 bytes = 1 KB
+// Trade: 1 KB memory for 3-5x speed (worth it!)
+
+// Impact: zlib became the standard (gzip, PNG, HTTP compression)
+// Used by: Billions of devices, every web browser, Linux kernel
+\end{lstlisting}
+
+\subsection{Legend 4: SQLite - Virtual Database Engine}
+
+D. Richard Hipp's bytecode VM (2001):
+
+\begin{lstlisting}
+// Traditional SQL engine: interpret AST
+// Problem: Function call overhead, branch mispredictions
+
+// SQLite: compile SQL to bytecode, use computed goto
+enum OpCode {
+    OP_Column, OP_Add, OP_Eq, OP_Goto, OP_Return, ...
+};
+
+// Computed goto dispatch (see earlier section)
+static void* opcodes[] = {
+    &&op_column, &&op_add, &&op_eq, &&op_goto, &&op_return
+};
+
+#define DISPATCH() goto *opcodes[pc++->opcode]
+
+void execute(Instruction* program) {
+    Instruction* pc = program;
+    DISPATCH();
+
+op_column:
+    // Fetch column from current row
+    stack[++sp] = cursor->column[pc->p1];
+    DISPATCH();
+
+op_add:
+    // Pop two values, add, push result
+    stack[sp-1] = stack[sp-1] + stack[sp];
+    sp--;
+    DISPATCH();
+
+// ... other opcodes ...
+}
+
+// Additional optimization: instruction specialization
+// Instead of generic "Op_Column", generate:
+// - Op_Column_Int (for integer columns)
+// - Op_Column_Text (for text columns)
+// - Op_Column_Null (for NULL)
+
+// Performance impact:
+// vs. MySQL (interpreted AST): 2-3x faster
+// vs. PostgreSQL (similar): competitive
+// Code size: smaller (bytecode is compact)
+
+// Why successful:
+// 1. Computed goto eliminates indirect call overhead
+// 2. Specialized opcodes reduce branching
+// 3. Stack-based VM is cache-friendly
+// 4. Instruction stream is sequential (good prefetch)
+
+// Impact: SQLite runs on 4+ billion devices
+// Used in: Every smartphone, web browser, car, IoT device
+\end{lstlisting}
+
+\subsection{Legend 5: DOOM's Visplane Optimization}
+
+John Carmack's renderer optimization (1993):
+
+\begin{lstlisting}
+// Original: draw floors/ceilings pixel-by-pixel
+void draw_floor_slow(int x, int y1, int y2) {
+    for (int y = y1; y < y2; y++) {
+        // Calculate texture coordinates for each pixel
+        float dist = calculate_distance(x, y);
+        float u = x / dist;
+        float v = y / dist;
+        int color = texture_lookup(u, v);
+        put_pixel(x, y, color);
+    }
+}
+
+// Optimized: "visplane" - track floor spans
+typedef struct {
+    int y;
+    int x1, x2;  // Start and end X
+} Span;
+
+Span spans[MAX_SPANS];
+int span_count;
+
+void collect_span(int y, int x1, int x2) {
+    spans[span_count].y = y;
+    spans[span_count].x1 = x1;
+    spans[span_count].x2 = x2;
+    span_count++;
+}
+
+void draw_spans_optimized(void) {
+    // Sort spans by Y coordinate
+    qsort(spans, span_count, sizeof(Span), compare_y);
+
+    // Draw horizontal spans (cache-friendly!)
+    for (int i = 0; i < span_count; i++) {
+        Span* s = &spans[i];
+        float dist_start = calculate_distance(s->x1, s->y);
+        float dist_end = calculate_distance(s->x2, s->y);
+
+        // Linear interpolation across span
+        for (int x = s->x1; x <= s->x2; x++) {
+            float t = (float)(x - s->x1) / (s->x2 - s->x1);
+            float dist = lerp(dist_start, dist_end, t);
+            // ... rest of texture mapping
+        }
+    }
+}
+
+// Key insights:
+// 1. Batch spans together
+// 2. Process horizontally (cache-friendly)
+// 3. Linear interpolation is cheaper than per-pixel calculation
+// 4. Reduce division operations (expensive on 486)
+
+// Performance:
+// 486DX/33 MHz: 15 FPS -> 35 FPS
+// Speedup: 2.3x
+
+// Impact: Made DOOM possible on low-end PCs
+// Enabled: The entire FPS genre
+\end{lstlisting}
+
+\subsection{Legend 6: Git's Pack File Format}
+
+Linus Torvalds' delta compression (2005):
+
+\begin{lstlisting}
+// Problem: Linux kernel repo = 500 MB of files
+// Traditional: store each version separately
+// Git: delta compression
+
+// Store base object + deltas
+typedef struct {
+    uint8_t type;
+    uint32_t base_offset;  // Points to base version
+    uint32_t delta_size;
+    uint8_t* delta_data;   // "Insert X bytes at offset Y"
+} PackedObject;
+
+// Delta encoding
+void create_delta(uint8_t* base, size_t base_len,
+                  uint8_t* target, size_t target_len,
+                  uint8_t** delta, size_t* delta_len) {
+    // Use sliding window to find matching blocks
+    for (size_t i = 0; i < target_len; ) {
+        // Find longest match in base
+        Match m = find_match(base, base_len, target + i, target_len - i);
+
+        if (m.len > 8) {
+            // Copy from base
+            emit_copy(delta, m.base_offset, m.len);
+            i += m.len;
+        } else {
+            // Insert literal byte
+            emit_insert(delta, target[i]);
+            i++;
+        }
+    }
+}
+
+// Pack file structure:
+// [Header][Obj1][Obj2][Delta1][Delta2]...
+// Delta1 -> "Based on Obj1, insert/copy to make version 2"
+
+// Performance impact:
+// - Linux kernel: 500 MB -> 150 MB (3.3x compression)
+// - Clone speed: 3x faster (less data to transfer)
+// - Disk usage: 3x smaller
+
+// Innovation: Delta against ANY previous object, not just parent
+// Traditional VCS: Delta only against direct parent
+// Git: Delta against any similar object (even in different directory!)
+
+// Additional optimization: delta chains
+// Version 1 -> Version 2 -> Version 3
+// But limit chain depth to avoid decompression overhead
+
+// Impact: Made distributed version control practical
+// Enabled: GitHub, millions of repositories
+\end{lstlisting}
+
+\subsection{Legend 7: Redis's Ziplist}
+
+Salvatore Sanfilippo's memory-efficient list (2009):
+
+\begin{lstlisting}
+// Traditional linked list
+typedef struct Node {
+    void* data;
+    struct Node* next;
+    struct Node* prev;
+} Node;  // 24 bytes overhead per node (on 64-bit)!
+
+// For list of 100 small integers: 2,400 bytes overhead
+
+// Redis ziplist: compact encoding
+// [total_bytes][tail_offset][count][entry1][entry2]...[end]
+//
+// Each entry:
+// [prev_len][encoding][data]
+//
+// prev_len: 1 or 5 bytes (small or large)
+// encoding: 1 byte (says if int or string, and size)
+// data: actual data
+
+// Example: list [1, 2, 3, 127, 128]
+// Traditional: 24*5 = 120 bytes overhead + data
+// Ziplist: 11 bytes header + 1 byte per small int = 16 bytes total!
+// Savings: 87%!
+
+typedef struct {
+    uint32_t total_bytes;
+    uint32_t tail_offset;
+    uint16_t count;
+    uint8_t entries[];  // Flexible array
+} Ziplist;
+
+// Encoding tricks
+#define ENCODING_INT8   0xFE   // 1-byte integer
+#define ENCODING_INT16  0xC0   // 2-byte integer
+#define ENCODING_INT32  0xD0   // 4-byte integer
+#define ENCODING_STR    0x00   // String (length follows)
+
+uint8_t* ziplist_push(Ziplist* zl, int value) {
+    // Choose smallest encoding
+    uint8_t encoding;
+    int len;
+
+    if (value >= -128 && value <= 127) {
+        encoding = ENCODING_INT8;
+        len = 1;
+    } else if (value >= -32768 && value <= 32767) {
+        encoding = ENCODING_INT16;
+        len = 2;
+    } else {
+        encoding = ENCODING_INT32;
+        len = 4;
+    }
+
+    // Grow ziplist, insert entry
+    // ...
+}
+
+// Performance:
+// Memory: 70-95% less than linked list
+// Cache: Much better (contiguous memory)
+// Speed: Iteration is 10x faster (no pointer chasing)
+// Trade-off: Insertions can be O(n) due to reallocation
+
+// When to use:
+// - Small lists (< 512 entries)
+// - Mostly append/read workload
+// - Memory is more important than insertion speed
+
+// Impact: Redis uses 30-50% less memory for typical workloads
+// Used for: Small hashes, lists, sorted sets
+// Result: Can fit 2x more data in same RAM
+\end{lstlisting}
+
+\subsection{Legend 8: LuaJIT's Trace Compiler}
+
+Mike Pall's JIT compiler (2005-2013):
+
+\begin{lstlisting}
+// Problem: Dynamic languages are slow (10-100x slower than C)
+// Traditional JIT: Compile whole functions
+
+// LuaJIT innovation: Trace compilation
+
+// 1. Interpreter runs and records "hot" loops
+// 2. When loop runs 50+ times, start tracing
+// 3. Record actual operations executed (with types!)
+// 4. Compile trace to machine code
+// 5. Execute compiled trace
+
+// Example Lua code:
+// function sum(n)
+//     local s = 0
+//     for i = 1, n do
+//         s = s + i
+//     end
+//     return s
+// end
+
+// Trace recorded (with type information):
+// i:int = 1
+// s:int = 0
+// loop:
+//   if i > n:int then goto exit
+//   s:int = s:int + i:int  // Types known!
+//   i:int = i:int + 1
+//   goto loop
+// exit:
+//   return s:int
+
+// Compiled to x86:
+//   xor eax, eax        ; s = 0
+//   mov ecx, 1          ; i = 1
+// loop:
+//   cmp ecx, [n]
+//   jg exit
+//   add eax, ecx        ; s += i (integer add, not slow Lua add!)
+//   inc ecx
+//   jmp loop
+// exit:
+//   ret
+
+// Key innovations:
+// 1. Type specialization (integer add, not generic add)
+// 2. Traces are linear (good for CPU prediction)
+// 3. SSA form optimization
+// 4. SIMD for array operations
+// 5. FFI (call C without overhead)
+
+// Performance vs. Standard Lua:
+// - Numeric code: 50-100x faster
+// - Overall: 10-50x faster
+// - Sometimes matches C speed!
+
+// Comparison:
+// Python (CPython): 1x
+// Python (PyPy): 5x
+// Lua (standard): 1x
+// Lua (LuaJIT): 20-50x
+
+// Impact: Made Lua viable for performance-critical applications
+// Used in: Game engines (World of Warcraft, Roblox), nginx,
+//          network appliances, embedded systems
+\end{lstlisting}
+
+\subsection{Legend 9: nginx's Event-Driven Architecture}
+
+Igor Sysoev's async I/O server (2004):
+
+\begin{lstlisting}
+// Apache model: one process/thread per connection
+// Problem: 10,000 connections = 10,000 threads
+// Each thread: 1-8 MB stack
+// Total: 10-80 GB RAM just for stacks!
+
+void apache_handle_request(int socket) {
+    char buffer[8192];
+
+    // Blocking reads - thread sleeps here
+    int n = read(socket, buffer, sizeof(buffer));
+
+    // Process request
+    process_request(buffer, n);
+
+    // Blocking write - thread sleeps here
+    write(socket, response, response_len);
+
+    close(socket);
+}
+
+// nginx model: event loop with non-blocking I/O
+// One worker per CPU core
+// Each worker handles thousands of connections
+
+typedef struct {
+    int fd;
+    int state;  // READING, PROCESSING, WRITING
+    char* buffer;
+    size_t buffer_size;
+    void (*handler)(struct connection*);
+} Connection;
+
+void nginx_worker(void) {
+    Connection connections[10000];
+    int epoll_fd = epoll_create(10000);
+
+    while (1) {
+        // Wait for events (non-blocking)
+        struct epoll_event events[100];
+        int n = epoll_wait(epoll_fd, events, 100, -1);
+
+        for (int i = 0; i < n; i++) {
+            Connection* conn = events[i].data.ptr;
+
+            switch (conn->state) {
+            case READING:
+                // Read what's available (non-blocking)
+                int n = read(conn->fd, conn->buffer, conn->buffer_size);
+                if (n > 0) {
+                    conn->state = PROCESSING;
+                    conn->handler(conn);
+                }
+                break;
+
+            case WRITING:
+                // Write what's possible (non-blocking)
+                write(conn->fd, conn->response, conn->response_len);
+                conn->state = DONE;
+                break;
+            }
+        }
+    }
+}
+
+// Performance comparison:
+// Apache (10,000 connections):
+// - Memory: 10 GB (threads)
+// - Context switches: constant
+// - Throughput: 2,000 req/sec
+
+// nginx (10,000 connections):
+// - Memory: 100 MB
+// - Context switches: minimal
+// - Throughput: 50,000 req/sec
+
+// Speedup: 25x more throughput, 100x less memory!
+
+// Additional optimizations:
+// 1. Cache-friendly data structures
+// 2. Memory pools (no malloc in hot path)
+// 3. Zero-copy sendfile()
+// 4. TCP_CORK for optimal packet size
+
+// Impact: Powers 30%+ of top websites
+// Used by: Netflix, Cloudflare, WordPress.com
+// Inspired: Node.js, Tornado, many others
+\end{lstlisting}
+
+\subsection{Legend 10: Doom 3's Reverse-Z Depth Buffer}
+
+Fabian Giesen's floating-point depth trick (2004):
+
+\begin{lstlisting}
+// Traditional depth buffer: 0.0 (near) to 1.0 (far)
+// Problem: floating-point precision is non-uniform
+
+// IEEE 754 float:
+// - Near 0: very precise (0.0000001 spacing)
+// - Near 1: less precise (0.000001 spacing)
+// - Far objects get "z-fighting" artifacts
+
+// Depth calculation (traditional)
+float depth_traditional(float z_near, float z_far, float z) {
+    // Maps [z_near, z_far] to [0.0, 1.0]
+    return (z_far * (z - z_near)) / (z * (z_far - z_near));
+}
+
+// Near plane (z=1): depth = 0.000001 precision
+// Far plane (z=1000): depth = 0.0001 precision
+// Precision loss: 100x!
+
+// Reverse-Z: 1.0 (near) to 0.0 (far)
+float depth_reverse_z(float z_near, float z_far, float z) {
+    // Maps [z_near, z_far] to [1.0, 0.0]
+    return (z_near * (z_far - z)) / (z * (z_far - z_near));
+}
+
+// Near plane (z=1): depth = 0.9999999 -> high precision near 1.0
+// Far plane (z=1000): depth = 0.001 -> still good precision near 0.0
+// Precision: More uniform across depth range!
+
+// Why it works:
+// Float has more precision near 0
+// By putting FAR at 0, we use more bits for distant objects
+// By putting NEAR at 1, we still have precision for close objects
+
+// Performance impact:
+// - Eliminates z-fighting at distance
+// - Can use larger view distances
+// - No extra computation (just flip comparison)
+
+// Setup:
+// 1. Reverse projection matrix
+// 2. Change depth test: GREATER instead of LESS
+// 3. Clear depth buffer to 0.0 instead of 1.0
+
+glDepthFunc(GL_GREATER);  // Reverse comparison
+glClearDepth(0.0);        // Clear to 0 instead of 1
+
+// Quality improvement:
+// Traditional 24-bit depth:
+// - Usable range: 1 - 1000 units
+// - Z-fighting beyond 500 units
+
+// Reverse-Z 24-bit depth:
+// - Usable range: 1 - 1,000,000 units!
+// - Clean rendering even at extreme distances
+
+// 32-bit float depth with reverse-Z:
+// - Practically infinite precision
+// - Can use z_near = 0.01, z_far = infinity
+
+// Impact: Now standard in modern engines
+// Used by: Unreal Engine 4+, Unity, Frostbite, id Tech
+// Solved: 20-year-old depth precision problem
+\end{lstlisting}
+
+\subsection{Bonus Legend: Michael Abrash's Mode X}
+
+VGA programming trick (1991):
+
+\begin{lstlisting}
+// Standard VGA mode 13h: 320x200, 256 colors
+// Problem: linear frame buffer, slow writes
+
+// Mode X: Undocumented VGA mode
+// Innovation: Planar memory access
+
+// Standard mode: write each pixel
+void draw_line_mode13(int y, int x1, int x2, uint8_t color) {
+    uint8_t* screen = (uint8_t*)0xA0000;
+    for (int x = x1; x <= x2; x++) {
+        screen[y * 320 + x] = color;  // One byte at a time
+    }
+}
+
+// Mode X: write 4 pixels at once
+void draw_line_modeX(int y, int x1, int x2, uint8_t color) {
+    // VGA has 4 planes, can write to all at once
+    uint8_t* screen = (uint8_t*)0xA0000;
+
+    // Set write mode: all 4 planes
+    outportb(0x3C4, 0x02);
+    outportb(0x3C5, 0x0F);  // Enable all 4 planes
+
+    // One write updates 4 pixels!
+    int offset = (y * 320 + x1) / 4;
+    for (int x = x1; x <= x2; x += 4) {
+        screen[offset++] = color;  // 4 pixels in one write!
+    }
+}
+
+// Performance:
+// Mode 13h: 320x200 clear = 64,000 writes
+// Mode X: 320x200 clear = 16,000 writes (4x faster!)
+
+// Additional benefits:
+// - Page flipping (double buffering)
+// - Hardware scrolling
+// - 320x240 resolution (instead of 200)
+
+// Impact:
+// - Enabled smooth animation on 386/486
+// - Used by: Doom, Duke Nukem 3D, hundreds of DOS games
+// - Explained in: Michael Abrash's Graphics Programming Black Book
+// - Became required knowledge for DOS game programmers
+
+// This optimization required understanding VGA hardware
+// deeply - true systems programming
+\end{lstlisting}
+
+\subsection{Lessons from the Legends}
+
+What these legendary optimizations teach us:
+
+\begin{enumerate}
+    \item \textbf{Understand your hardware}: Quake's fast inverse sqrt, Mode X
+    \item \textbf{Question assumptions}: Reverse-Z (put far at 0, not near)
+    \item \textbf{Trade memory for speed}: zlib lookup tables (1KB → 3x faster)
+    \item \textbf{Trade CPU for memory}: Redis ziplist (slower insert, 90\% less memory)
+    \item \textbf{Specialize for common case}: LuaJIT traces with type info
+    \item \textbf{Eliminate synchronization}: Linux RCU (readers never block)
+    \item \textbf{Batch operations}: DOOM visplanes (process spans together)
+    \item \textbf{Compression wins}: Git delta encoding (3x less data)
+    \item \textbf{Event-driven scales}: nginx (25x more throughput)
+    \item \textbf{Measure and profile}: All of them profiled first!
+\end{enumerate}
+
+These aren't just performance tricks—they're \textbf{paradigm shifts} that changed what was possible in software. Study them, understand the principles, and apply those principles to your own code!
