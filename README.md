@@ -1,12 +1,12 @@
 # Practical C Programming: Idioms & Patterns They Don't Teach in Books
 
-A comprehensive 642-page book covering real-world C programming patterns and idioms that are rarely taught in traditional textbooks. Written for intermediate to advanced C programmers who want to understand how professionals actually write C code.
+A comprehensive book covering real-world C programming patterns and idioms that are rarely taught in traditional textbooks. Written for intermediate to advanced C programmers who want to understand how professionals actually write C code.
 
 ## 📖 About This Book
 
 Ever wondered how professional C programmers structure their code? This book bridges the gap between "I know C syntax" and "I can write production C code." It's packed with practical patterns used in SQLite, Redis, Linux kernel, Git, and other major C projects.
 
-### What's Inside (642 Pages!)
+### What's Inside
 
 - **Opaque Pointers** - Information hiding and API design
 - **Function Pointers & Callbacks** - Polymorphism without OOP
@@ -28,7 +28,6 @@ Ever wondered how professional C programmers structure their code? This book bri
 - **60% Code Examples** - Not just theory—complete, working code
 - **Real-World Focus** - Patterns from actual production codebases
 - **Detailed Explanations** - Even complex concepts explained clearly
-- **Humorous Tone** - Technical but not dry
 - **No Beginner Hand-Holding** - Assumes you already know C basics
 - **Professional Depth** - Bibliography with 50+ references
 
@@ -49,7 +48,6 @@ Available formats:
 ### File Information
 
 - **Format**: PDF, EPUB
-- **Pages**: 642
 - **Size**: ~3-4 MB (varies by format)
 - **Optimized for**: Kindle, tablets, desktop reading, e-readers
 - **Updates**: Automatically built on every release tag
@@ -150,8 +148,8 @@ c_custom_book/
 ### Front Matter
 
 - Copyright page
-- Dedication (to 3 AM debuggers)
-- Acknowledgments (humorous)
+- Dedication
+- Acknowledgments
 - About the Author
 - Table of Contents
 
@@ -245,4 +243,4 @@ return 0;
 
 ---
 
-*Last Updated: 2025 | Version 1.0 | 642 pages*
+*Last Updated: 2025 | Version 1.0*
