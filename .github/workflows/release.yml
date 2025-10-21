@@ -11,19 +11,17 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install LaTeX
+      - name: Update system and install dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y texlive-latex-extra texlive-fonts-recommended texlive-fonts-extra texlive-latex-recommended texlive-xetex latexmk
-
-      - name: Install Calibre for EPUB conversion
-        run: |
-          sudo apt-get install -y calibre
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm texlive-most texlive-latexextra texlive-fontsextra calibre tar gzip git
 
       - name: Build standard PDF
         run: |
@@ -39,7 +37,7 @@ jobs:
 
       - name: Create source archive
         run: |
-          tar -czf practical-c-book-source.tar.gz --exclude='.git' --exclude='*.aux' --exclude='*.log' --exclude='*.out' --exclude='*.toc' --exclude='*.fdb_latexmk' --exclude='*.fls' --exclude='*.synctex.gz' .</parameter>
+          tar -czf practical-c-book-source.tar.gz --exclude='.git' --exclude='*.aux' --exclude='*.log' --exclude='*.out' --exclude='*.toc' --exclude='*.fdb_latexmk' --exclude='*.fls' --exclude='*.synctex.gz' --exclude='*.pdf' .
 
       - name: Rename output files
         run: |
@@ -82,4 +80,4 @@ jobs:
             practical-c-book-kindle.pdf
             practical-c-book.epub
             practical-c-book-source.tar.gz
-          retention-days: 30</parameter>
+          retention-days: 30
