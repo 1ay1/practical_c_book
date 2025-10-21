@@ -1,0 +1,1318 @@
+\documentclass[11pt,openany]{book}
+
+% Page setup for Kindle - optimized for readability
+% Using standard page size with balanced margins
+\usepackage[paperwidth=6in, paperheight=9in, margin=0.6in]{geometry}
+
+% Essential packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{inconsolata}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tcolorbox}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{amssymb}
+
+% Colors for code - high contrast for better readability
+\definecolor{codebg}{RGB}{248,248,250}
+\definecolor{keywordcolor}{RGB}{170,13,145}
+\definecolor{stringcolor}{RGB}{196,26,22}
+\definecolor{commentcolor}{RGB}{87,166,74}
+\definecolor{warningcolor}{RGB}{255,140,0}
+\definecolor{tipcolor}{RGB}{70,130,180}
+
+% Code listing setup - optimized for Kindle readability
+\lstset{
+    basicstyle=\small\ttfamily,  % Balanced size for code
+    keywordstyle=\color{keywordcolor}\bfseries,
+    stringstyle=\color{stringcolor},
+    commentstyle=\color{commentcolor}\itshape,
+    numberstyle=\tiny\color{gray},
+    numbers=left,
+    stepnumber=1,
+    numbersep=8pt,
+    backgroundcolor=\color{codebg},
+    showspaces=false,
+    showstringspaces=false,
+    showtabs=false,
+    frame=single,
+    framesep=8pt,
+    tabsize=4,
+    captionpos=b,
+    breaklines=true,
+    breakatwhitespace=false,
+    escapeinside={(*@}{@*)},
+    language=C
+}
+
+% Custom boxes - clean and compact
+\newtcolorbox{warningbox}{
+    colback=warningcolor!5!white,
+    colframe=warningcolor,
+    title=\textbf{Warning},
+    fonttitle=\bfseries,
+    boxrule=0.8pt,
+    arc=2pt,
+    left=6pt,
+    right=6pt,
+    top=6pt,
+    bottom=6pt
+}
+
+\newtcolorbox{tipbox}{
+    colback=tipcolor!5!white,
+    colframe=tipcolor,
+    title=\textbf{Pro Tip},
+    fonttitle=\bfseries,
+    boxrule=0.8pt,
+    arc=2pt,
+    left=6pt,
+    right=6pt,
+    top=6pt,
+    bottom=6pt
+}
+
+\newtcolorbox{notebox}{
+    colback=yellow!10!white,
+    colframe=yellow!80!black,
+    title=\textbf{Note},
+    fonttitle=\bfseries,
+    boxrule=0.8pt,
+    arc=2pt,
+    left=6pt,
+    right=6pt,
+    top=6pt,
+    bottom=6pt
+}
+
+% Header/Footer - simplified for Kindle
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE,RO]{\thepage}
+\fancyhead[RE]{\leftmark}
+\fancyhead[LO]{\rightmark}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% Hyperref setup
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,
+    urlcolor=cyan,
+    pdftitle={Practical C Programming: Idioms and Patterns (Kindle Edition)},
+    pdfauthor={C Mastery Guide},
+    pdfsubject={C Programming},
+    pdfkeywords={C, programming, idioms, patterns, practical, Kindle}
+}
+
+% Title formatting - clean and professional
+\titleformat{\chapter}[display]
+{\normalfont\Large\bfseries}{\chaptertitlename\ \thechapter}{15pt}{\huge}
+\titlespacing*{\chapter}{0pt}{0pt}{30pt}
+
+% Slightly increased line spacing for Kindle readability
+\linespread{1.15}
+
+% Document info
+\title{\LARGE\bfseries Practical C Programming:\\Idioms \& Patterns\\They Don't Teach in Books\\[0.8em]\large Kindle Edition}
+\author{\large The Real-World Guide}
+\date{\today}
+
+\begin{document}
+
+\frontmatter
+\maketitle
+
+% Copyright page
+\thispagestyle{empty}
+\vspace*{\fill}
+\begin{center}
+\textbf{Practical C Programming: Idioms \& Patterns They Don't Teach in Books}
+
+\textbf{Kindle Edition}
+
+Copyright \textcopyright\ 2025 by C Mastery Guide
+
+All rights reserved. No part of this publication may be reproduced, distributed, or transmitted in any form or by any means, including photocopying, recording, or other electronic or mechanical methods, without the prior written permission of the publisher, except in the case of brief quotations embodied in critical reviews and certain other noncommercial uses permitted by copyright law.
+
+\vspace{1em}
+
+Published by C Mastery Guide
+
+\vspace{1em}
+
+\textbf{Disclaimer:}
+
+The information in this book is distributed on an ``as is'' basis, without warranty. While every precaution has been taken in the preparation of this book, neither the author nor the publisher shall have any liability to any person or entity with respect to any loss or damage caused or alleged to be caused directly or indirectly by the code examples or instructions contained in this book.
+
+All code examples are provided for educational purposes. The author and publisher are not responsible for any consequences of using this code in production environments. Please test thoroughly and use at your own risk.
+
+\vspace{1em}
+
+Trademarks: All terms mentioned in this book that are known to be trademarks or service marks have been appropriately capitalized. The publisher cannot attest to the accuracy of this information. Use of a term in this book should not be regarded as affecting the validity of any trademark or service mark.
+
+\vspace{1em}
+
+First Edition: 2025
+
+\vspace{1em}
+
+ISBN: 978-X-XXXX-XXXX-X (placeholder)
+
+\end{center}
+\vspace*{\fill}
+\clearpage
+
+% Dedication
+\thispagestyle{empty}
+\vspace*{3in}
+\begin{center}
+\textit{To every programmer who has debugged a segmentation fault at 3 AM,\\
+spent hours hunting a missing semicolon,\\
+and wondered why their carefully crafted pointer arithmetic was off by one.}
+
+\vspace{2em}
+
+\textit{You are not alone.}
+
+\vspace{2em}
+
+\textit{This book is for you.}
+\end{center}
+\vspace*{\fill}
+\clearpage
+
+% Acknowledgments
+\chapter*{Acknowledgments}
+\addcontentsline{toc}{chapter}{Acknowledgments}
+
+This book would not exist without the contributions of countless C programmers over the past five decades. And coffee. Mostly coffee.
+
+\textbf{To Dennis Ritchie and Brian Kernighan:} Thanks for creating C and then writing a book about it that's somehow still the best one. You set an impossibly high bar. This book doesn't reach it, but we're trying anyway.
+
+\textbf{To the open source community:} The maintainers of SQLite, Redis, Git, the Linux kernel, FFmpeg, cURL, and countless other projects. Your code is so well-written it makes the rest of us look bad. Thanks for that. No, seriously—studying your projects is better than any CS degree.
+
+\textbf{To Linus Torvalds:} For creating Linux, for creating Git, and for writing entertainingly angry emails about coding standards. You've taught us that good code matters and that tabs are objectively wrong. (The second part is debatable, but we're not brave enough to argue with you.)
+
+\textbf{To Stack Overflow:} For answering the question ``Why does my C program segfault?'' approximately 47,000 times without (usually) being too sarcastic about it.
+
+\textbf{To everyone who's ever debugged a segfault at 3 AM:} You are the true heroes. This book is for you.
+
+\textbf{To the person who invented \texttt{valgrind}:} You saved us from ourselves. Repeatedly.
+
+\textbf{To the readers:} Thanks for buying this book instead of just Googling everything. If it saves you even one hour of debugging time, it was worth the caffeine addiction and eye strain. If it \textit{doesn't} save you time, well, at least you learned some new ways to segfault.
+
+\vspace{1em}
+
+Special thanks to the creators of \LaTeX\ for making typesetting look this good, and to the maintainers of GCC, Clang, and MSVC for their compilers and their exceptionally creative error messages.
+
+Finally, thanks to coffee. And energy drinks. And the occasional nap under the desk.
+
+\vspace{2em}
+
+— The Author, 2025
+
+\textit{P.S. If you find errors in this book, they're features. But please report them anyway.}
+
+\clearpage
+
+% About the Author
+\chapter*{About the Author}
+\addcontentsline{toc}{chapter}{About the Author}
+
+The author is a C programmer who has written enough \texttt{malloc()} calls to feel personally responsible for global memory consumption. They have debugged segmentation faults in production at 3 AM, argued about brace placement with colleagues, and once spent an entire afternoon hunting a bug that turned out to be a missing semicolon (we don't talk about that day).
+
+This book exists because the author got tired of seeing the same question repeated: ``I know C syntax, but how do professionals actually write C?'' Textbooks teach \texttt{for} loops and \texttt{if} statements. Real codebases are full of opaque pointers, VTables, X-Macros, and other patterns that make newcomers wonder if they're reading the same language. This book fixes that.
+
+The author believes C is like a very sharp knife: incredibly useful, potentially dangerous, and absolutely worth learning to use properly. Sure, modern languages have safety guards and garbage collectors, but C makes you understand what's actually happening in that computer sitting on your desk. That understanding is valuable regardless of what language you use day-to-day.
+
+Also, the author has strong opinions about tabs vs spaces. Very strong opinions. (It's spaces. Don't @ me.)
+
+\vspace{2em}
+
+\textbf{Contact:}
+
+For errata, questions, or feedback about this book, please visit:
+
+\begin{itemize}
+    \item \textbf{Repository}: \url{https://codeberg.org/_a/C_Idioms_And_Patterns}
+    \item \textbf{Email}: See repository for contact information
+    \item \textbf{Errata}: See the Errata chapter for how to report issues
+\end{itemize}
+
+\vspace{1em}
+
+\textbf{Other Books by the Author:}
+
+\textit{(Future titles to be announced)}
+
+\vspace{1em}
+
+\textbf{Stay Updated:}
+
+\begin{itemize}
+    \item Follow development on Codeberg for code examples and updates
+    \item Check the repository for errata, supplementary materials, and announcements
+    \item Join the community discussions on Reddit r/C\_Programming
+\end{itemize}
+
+\clearpage
+
+\tableofcontents
+
+\chapter{How to Use This Book}
+
+\section*{Reading Strategies}
+
+This book is designed to be used in multiple ways, depending on your needs and learning style.
+
+\subsection*{Strategy 1: Cover-to-Cover (The Complete Immersion)}
+
+\textbf{Best for:} Intermediate C programmers who want comprehensive knowledge.
+
+\textbf{How to do it:}
+\begin{enumerate}
+    \item Start at Chapter 1, read sequentially through to the end
+    \item Type out every code example—don't copy-paste
+    \item Compile and run each example to see it work
+    \item Experiment by modifying examples and observing results
+    \item Take notes on patterns you find particularly useful
+    \item Revisit challenging sections after completing other chapters
+\end{enumerate}
+
+\textbf{Time commitment:} 2-3 weeks of dedicated reading (2-3 hours daily)
+
+\textbf{What you'll gain:} Complete understanding of professional C patterns and idioms
+
+\subsection*{Strategy 2: Just-In-Time Reference (The Problem Solver)}
+
+\textbf{Best for:} Experienced programmers solving specific problems.
+
+\textbf{How to do it:}
+\begin{enumerate}
+    \item Use the detailed table of contents to find relevant chapters
+    \item Jump directly to sections addressing your current problem
+    \item Read the introduction and examples for that topic
+    \item Implement the pattern in your code
+    \item Refer to "Common Pitfalls" sections to avoid mistakes
+    \item Bookmark frequently-referenced chapters for quick access
+\end{enumerate}
+
+\textbf{Time commitment:} 15-30 minutes per topic as needed
+
+\textbf{What you'll gain:} Immediate solutions to specific challenges
+
+\subsection*{Strategy 3: Code-First Learning (The Hands-On Approach)}
+
+\textbf{Best for:} Developers who learn by doing.
+
+\textbf{How to do it:}
+\begin{enumerate}
+    \item Scan each chapter's code examples first
+    \item Try to understand what the code does before reading explanations
+    \item Read the surrounding text only when confused
+    \item Modify examples to test your understanding
+    \item Create your own variations of the patterns
+    \item Come back to read full explanations after experimenting
+\end{enumerate}
+
+\textbf{Time commitment:} Variable, depends on experimentation depth
+
+\textbf{What you'll gain:} Deep intuitive understanding through exploration
+
+\subsection*{Strategy 4: Reference + Study (The Professional Approach)}
+
+\textbf{Best for:} Working professionals improving their C skills.
+
+\textbf{How to do it:}
+\begin{enumerate}
+    \item Read one chapter per week during commute or lunch break
+    \item Focus on chapters relevant to your current project
+    \item Keep the book at your desk for quick reference
+    \item Apply one new pattern per week in real code
+    \item Review the glossary and quick reference regularly
+    \item Discuss patterns with colleagues for deeper understanding
+\end{enumerate}
+
+\textbf{Time commitment:} 30-60 minutes per week over 4-5 months
+
+\textbf{What you'll gain:} Gradual, sustained improvement in C skills
+
+\section*{Chapter Dependencies}
+
+Most chapters are self-contained, but some build on earlier concepts:
+
+\textbf{Core Foundations (Read First):}
+\begin{itemize}
+    \item Chapter 1: Opaque Pointers
+    \item Chapter 2: Function Pointers
+    \item Chapter 7: Struct Patterns
+\end{itemize}
+
+\textbf{Can Read Independently:}
+\begin{itemize}
+    \item Chapter 3: Macros
+    \item Chapter 4: Strings
+    \item Chapter 5: Error Handling
+    \item Chapter 8: Headers
+    \item Chapter 9: Preprocessor
+    \item Chapter 14: Testing
+    \item Chapter 15: Build Patterns
+\end{itemize}
+
+\textbf{Advanced Topics (Read After Foundations):}
+\begin{itemize}
+    \item Chapter 11: State Machines (uses function pointers)
+    \item Chapter 12: Generic Programming (uses macros and function pointers)
+    \item Chapter 13: Linked Structures (uses struct patterns)
+    \item Chapter 18: Advanced Patterns (uses everything)
+\end{itemize}
+
+\section*{Working with Code Examples}
+
+\subsection*{Typing vs. Copy-Paste}
+
+\textbf{We strongly recommend typing examples yourself.} Here's why:
+
+\begin{itemize}
+    \item \textbf{Muscle memory}: Your fingers learn the patterns
+    \item \textbf{Attention to detail}: You notice every semicolon, pointer, and brace
+    \item \textbf{Understanding}: You can't type what you don't understand
+    \item \textbf{Debugging practice}: You'll make mistakes and learn to fix them
+\end{itemize}
+
+All code examples are available in the book's repository at:
+\url{https://codeberg.org/_a/C_Idioms_And_Patterns}
+
+Use the repository versions for:
+\begin{itemize}
+    \item Verifying your typed version compiles correctly
+    \item Checking that you didn't miss anything
+    \item Grabbing complete project structures
+    \item Getting Makefiles and build scripts
+\end{itemize}
+
+\subsection*{Compiling Examples}
+
+Most examples can be compiled with:
+\begin{verbatim}
+gcc -Wall -Wextra -std=c99 -o example example.c
+\end{verbatim}
+
+Some examples require additional flags or libraries—check the comments in each example.
+
+\section*{Getting Help}
+
+\textbf{When you're stuck:}
+
+\begin{enumerate}
+    \item \textbf{Check the code carefully}: Most issues are typos or missing semicolons
+    \item \textbf{Read compiler errors slowly}: They usually tell you exactly what's wrong
+    \item \textbf{Consult the glossary}: Terms you don't understand are defined there
+    \item \textbf{Review related chapters}: Sometimes context from other chapters helps
+    \item \textbf{Check the errata}: Known issues are documented
+    \item \textbf{Ask online}: Stack Overflow, Reddit r/C\_Programming, or the book's repository
+\end{enumerate}
+
+\textbf{Resources in this book:}
+\begin{itemize}
+    \item \textbf{Table of Contents}: Find topics quickly
+    \item \textbf{Glossary}: Define unfamiliar terms
+    \item \textbf{Appendix A}: Quick reference for common idioms
+    \item \textbf{Appendix B}: External resources and further reading
+    \item \textbf{Bibliography}: Deep dives into specific topics
+\end{itemize}
+
+\section*{Practice Suggestions}
+
+\textbf{After reading each chapter:}
+
+\begin{enumerate}
+    \item \textbf{Implement the patterns}: Write code using what you learned
+    \item \textbf{Refactor old code}: Apply new patterns to existing projects
+    \item \textbf{Study real codebases}: Find the patterns in SQLite, Redis, or Git
+    \item \textbf{Teach someone}: Explaining concepts solidifies understanding
+    \item \textbf{Take notes}: Write down patterns you'll use most often
+\end{enumerate}
+
+\textbf{Building a practice project:}
+
+Consider building a small project that uses multiple patterns:
+\begin{itemize}
+    \item A simple database (hash tables, file I/O, error handling)
+    \item A text editor (dynamic arrays, memory management, cross-platform code)
+    \item A network server (sockets, state machines, circular buffers)
+    \item A game (event handling, performance optimization, data structures)
+\end{itemize}
+
+\section*{Notes on Code Style}
+
+The code in this book prioritizes \textbf{clarity over cleverness}. You'll notice:
+
+\begin{itemize}
+    \item \textbf{Explicit code}: We spell things out rather than using shortcuts
+    \item \textbf{Comments}: More than you'd see in production (for teaching purposes)
+    \item \textbf{Error checking}: Sometimes simplified for brevity
+    \item \textbf{Naming}: Clear, descriptive names over short ones
+\end{itemize}
+
+In production code, you might:
+\begin{itemize}
+    \item Add more comprehensive error handling
+    \item Use project-specific naming conventions
+    \item Add logging and debugging support
+    \item Include unit tests
+    \item Follow your team's style guide
+\end{itemize}
+
+\section*{A Word on Standards}
+
+This book primarily targets C99 and C11, with occasional C17 features. These are widely supported and represent modern C programming.
+
+If you're working with:
+\begin{itemize}
+    \item \textbf{C89/C90}: Most patterns still work; avoid designated initializers and declarations in for-loops
+    \item \textbf{C11}: All patterns work; you get additional features like atomics and threads
+    \item \textbf{C17/C18}: Minor updates to C11; everything here applies
+    \item \textbf{C2x (future)}: Check errata for updates when finalized
+\end{itemize}
+
+\vspace{2em}
+
+\textbf{Now you're ready. Pick your reading strategy and dive in!}
+
+\clearpage
+
+\chapter{Preface: Read This or Suffer the Consequences}
+
+Welcome to \textit{Practical C Programming}! Before you dive in, we need to have an honest conversation about what you're getting yourself into.
+
+\section*{This Is NOT a Beginner Book (Seriously)}
+
+Let's get this out of the way immediately: \textbf{If you don't already know C, close this book and run away.} Not walk. \textit{Run.}
+
+This book assumes you already know:
+\begin{itemize}
+    \item What a pointer is (and that \texttt{*} and \texttt{\&} aren't just decorative symbols)
+    \item How \texttt{malloc()} and \texttt{free()} work (and why forgetting \texttt{free()} is bad)
+    \item Basic data structures (arrays, structs, linked lists)
+    \item How to compile a C program without crying
+    \item That segmentation faults are not a feature
+    \item Why \texttt{char* str = "hello"; str[0] = 'H';} is a terrible idea
+\end{itemize}
+
+If you just said ``What's a segmentation fault?'' then you need a different book. May we suggest \textit{The C Programming Language} by Kernighan and Ritchie? Come back when you've read that, written a few thousand lines of C, and debugged at least one memory leak at 2 AM.
+
+\begin{warningbox}
+\textbf{Reality Check:} This book starts at intermediate and goes to advanced. We're not holding your hand. We assume you can read code, understand pointers without panicking, and have already made most of the beginner mistakes. If you're still confusing \texttt{malloc(sizeof(int*))} with \texttt{malloc(sizeof(int))}, bookmark this book and come back in six months.
+\end{warningbox}
+
+\section*{Warning: Extreme Code Density Ahead}
+
+Fair warning: \textbf{This book is approximately 60\% code listings.}
+
+We're not kidding. Open to a random page and you'll likely find:
+\begin{itemize}
+    \item At least one complete code example (15-50 lines)
+    \item Multiple smaller code snippets
+    \item Preprocessor macros that look like cursed incantations
+    \item Function pointers doing unspeakable things
+    \item Struct definitions that make you question your life choices
+\end{itemize}
+
+Why so much code? Because \textbf{this is a book about how C is actually written}, not just talked about. You can't learn C idioms from prose alone---you need to see the code, understand it, type it out, compile it, break it, fix it, and eventually internalize it.
+
+\begin{tipbox}
+\textbf{Pro Tip:} Don't just read the code---\textit{type it out}. Copy-paste is the enemy of learning. Your fingers need to feel the pain of typing \texttt{typedef struct node \{ struct node* next; \} node;} before your brain truly understands it.
+\end{tipbox}
+
+If you were hoping for a book that gently explains concepts with minimal code examples, you've come to the wrong place. This book is for people who \textit{like} reading code. If seeing a 100-line code listing makes you excited rather than nauseous, you're in the right spot.
+
+\section*{What This Book Actually Covers}
+
+This book fills the gap between ``I know C syntax'' and ``I can write professional C code.'' It covers the idioms, patterns, and techniques that experienced C programmers use constantly but are \textit{never} explained in university courses or beginner tutorials.
+
+We cover things like:
+\begin{itemize}
+    \item \textbf{Opaque Pointers}: How to hide implementation details like a professional
+    \item \textbf{Function Pointers}: Callbacks, vtables, and other ways to confuse your coworkers
+    \item \textbf{Macro Magic}: The preprocessor's dark arts (use responsibly)
+    \item \textbf{String Handling}: Because C strings are a nightmare and you need to know why
+    \item \textbf{Error Handling}: Beyond ``just return -1 and hope for the best''
+    \item \textbf{Memory Patterns}: Arena allocators, object pools, and other malloc alternatives
+    \item \textbf{Struct Tricks}: Flexible arrays, inheritance without OOP, and other black magic
+    \item \textbf{Header Organization}: So you stop creating circular include dependencies
+    \item \textbf{Generic Programming}: Templates? We don't need no stinking templates!
+    \item \textbf{Testing in C}: Yes, it's possible. No, it's not fun.
+    \item \textbf{Cross-Platform Code}: Making your code work on Windows \textit{and} Unix (spoiler: it's painful)
+    \item \textbf{Advanced Patterns}: X-Macros, intrusive data structures, and other party tricks
+\end{itemize}
+
+These are the patterns used by SQLite, Redis, the Linux kernel, Git, and every other serious C codebase. They're not in the C standard. They're not in K\&R. They're the accumulated wisdom of decades of C programmers solving real problems.
+
+\section*{Who This Book Is For}
+
+You're the target audience if:
+\begin{itemize}
+    \item You can write a linked list in C without consulting Stack Overflow
+    \item You've debugged at least one use-after-free bug
+    \item You understand why \texttt{printf("\%s", NULL)} is a bad idea
+    \item You want to understand how professional C code is structured
+    \item You're tired of tutorials that treat you like a child
+    \item You actually \textit{enjoy} reading other people's code
+    \item You have a job (or want one) where C is used in production
+\end{itemize}
+
+You're \textbf{not} the target audience if:
+\begin{itemize}
+    \item You're still learning what pointers do
+    \item You think ``undefined behavior'' is a myth
+    \item You've never heard of \texttt{valgrind}
+    \item Reading code makes you anxious
+    \item You want hand-holding and gentle explanations
+    \item You prefer watching videos to reading dense technical content
+\end{itemize}
+
+\section*{How to Use This Book}
+
+\textbf{Approach \#1: The Deep Dive}
+
+Read it cover-to-cover. Type out every example. Compile everything. Break things. Fix them. This is the hard way, but you'll learn the most.
+
+\textbf{Approach \#2: The Reference Manual}
+
+Jump to whatever topic you need. Each chapter is relatively self-contained. Need to understand opaque pointers? Chapter 1. Function pointers confusing you? Chapter 2. Trying to make code work on Windows? Chapter 17 (and good luck).
+
+\textbf{Approach \#3: The Code Review}
+
+Read the code first, then read the explanations. See if you can figure out what's happening before we tell you. This trains you to read unfamiliar codebases---a critical skill.
+
+\begin{notebox}
+\textbf{Every Pattern Includes:}
+\begin{itemize}
+    \item Complete, working code examples (not pseudocode or fragments)
+    \item Explanations of \textit{why}, not just \textit{how}
+    \item Real-world use cases from actual projects
+    \item Common pitfalls and gotchas
+    \item Pro tips from experienced developers
+\end{itemize}
+\end{notebox}
+
+\section*{A Word About the Code}
+
+All code examples in this book:
+\begin{itemize}
+    \item Are complete and compilable (unless explicitly marked as pseudocode)
+    \item Use C99 or later (occasionally C11 when needed)
+    \item Follow common conventions (but we'll explain alternative styles)
+    \item Prioritize clarity over cleverness (usually)
+    \item Include error checking (when relevant to the pattern)
+\end{itemize}
+
+We assume you're using a modern C compiler (GCC, Clang, or MSVC). If you're still on Borland C++ from 1995, you have bigger problems than this book can solve.
+
+\section*{Fair Warning About Chapter 17}
+
+Chapter 17 is about cross-platform C development (Windows, Linux, macOS). It's \textit{dense}. It's \textit{long}. It contains approximately 847 preprocessor conditionals (we didn't count, but it feels like it).
+
+If you've never tried to make C code work on both Windows and Unix, Chapter 17 will be enlightening. If you \textit{have} tried, Chapter 17 will feel like group therapy.
+
+\section*{The Unspoken Promise}
+
+By the end of this book, you'll be able to:
+\begin{itemize}
+    \item Read professional C codebases without feeling lost
+    \item Understand \textit{why} experienced developers structure code certain ways
+    \item Write C that doesn't just work, but is maintainable and robust
+    \item Debug complex C programs systematically
+    \item Contribute to real C projects with confidence
+    \item Argue about coding style in code reviews (a critical skill)
+\end{itemize}
+
+But here's what this book \textit{won't} teach you:
+\begin{itemize}
+    \item The absolute basics of C syntax (go read K\&R)
+    \item How to write perfect, bug-free C (nobody can)
+    \item Algorithms and data structures in detail (different book)
+    \item How to become a 10x programmer overnight (not possible)
+\end{itemize}
+
+\section*{Final Thoughts Before We Begin}
+
+C is not a beginner-friendly language. It never was. It was designed by programmers, for programmers, to write operating systems. It trusts you completely---and that trust can be your downfall.
+
+This book respects your intelligence. We won't waste time explaining what a variable is. We won't patronize you. We'll throw code at you and expect you to understand it (or at least puzzle through it).
+
+If this sounds intimidating, good. It should be. C is a powerful tool, and powerful tools require skill to wield safely.
+
+If this sounds \textit{exciting}, excellent. You're in the right place.
+
+\vspace{1em}
+
+\textbf{Ready? Let's write some damn good C code.}
+
+\vspace{2em}
+
+\begin{center}
+\textit{``Everyone knows that debugging is twice as hard as writing a program in the first place.\\
+So if you're as clever as you can be when you write it, how will you ever debug it?''}\\
+\vspace{0.5em}
+--- Brian Kernighan
+\end{center}
+
+\mainmatter
+
+% Include all chapter files
+\include{chapters/01_opaque_pointers}
+\include{chapters/02_function_pointers}
+\include{chapters/03_macros}
+\include{chapters/04_strings}
+\include{chapters/05_error_handling}
+\include{chapters/06_memory_management}
+\include{chapters/07_structs}
+\include{chapters/08_headers}
+\include{chapters/09_preprocessor}
+\include{chapters/10_initialization}
+\include{chapters/11_state_machines}
+\include{chapters/12_generic_programming}
+\include{chapters/13_linked_structures}
+\include{chapters/14_testing}
+\include{chapters/15_build_patterns}
+\include{chapters/16_performance}
+\include{chapters/17_platform_specific}
+\include{chapters/18_advanced_patterns}
+
+\backmatter
+
+% Appendix A: Quick Reference
+\chapter{Appendix A: Quick Reference Guide}
+
+\section*{Essential C Idioms at a Glance}
+
+\subsection*{Opaque Pointers}
+\begin{lstlisting}
+// In header (.h):
+typedef struct MyStruct MyStruct;
+MyStruct* mystruct_create(void);
+
+// In implementation (.c):
+struct MyStruct { int data; };
+\end{lstlisting}
+
+\subsection*{Error Handling}
+\begin{lstlisting}
+// Return -1 on error, 0 on success
+int do_something(void) {
+    if (error) return -1;
+    return 0;
+}
+
+// Return NULL on error
+void* allocate_something(void) {
+    void* ptr = malloc(size);
+    if (!ptr) return NULL;
+    return ptr;
+}
+\end{lstlisting}
+
+\subsection*{String Safety}
+\begin{lstlisting}
+// Safe string copy
+strncpy(dest, src, sizeof(dest) - 1);
+dest[sizeof(dest) - 1] = '\0';
+
+// Safe string format
+snprintf(buf, sizeof(buf), "Value: %d", x);
+\end{lstlisting}
+
+\subsection*{Memory Management}
+\begin{lstlisting}
+// Always check malloc
+void* ptr = malloc(size);
+if (!ptr) { /* handle error */ }
+
+// Always free and NULL
+free(ptr);
+ptr = NULL;
+
+// sizeof the variable, not the type
+MyStruct* s = malloc(sizeof(*s));
+\end{lstlisting}
+
+\subsection*{Struct Initialization}
+\begin{lstlisting}
+// Zero-initialize
+MyStruct s = {0};
+
+// Designated initializers (C99+)
+MyStruct s = {.x = 10, .y = 20};
+\end{lstlisting}
+
+\subsection*{Common Macros}
+\begin{lstlisting}
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+#define UNUSED(x) (void)(x)
+\end{lstlisting}
+
+\section*{Common Mistakes to Avoid}
+
+\begin{itemize}
+    \item \textbf{Using gets()}: Use \texttt{fgets()} instead
+    \item \textbf{Using strcpy()}: Use \texttt{strncpy()} or \texttt{strlcpy()}
+    \item \textbf{Using sprintf()}: Use \texttt{snprintf()} instead
+    \item \textbf{Comparing floats with ==}: Use epsilon comparison
+    \item \textbf{Using memcmp on structs}: Padding bytes have undefined values
+    \item \textbf{Forgetting to null-terminate strings}: Always add \texttt{'\textbackslash 0'}
+    \item \textbf{Dereferencing before checking NULL}: Always check pointers first
+    \item \textbf{Returning pointers to local variables}: They're gone after function returns
+\end{itemize}
+
+\section*{Must-Know Header Files}
+
+\begin{itemize}
+    \item \texttt{<stdio.h>}: File I/O, printf, scanf
+    \item \texttt{<stdlib.h>}: malloc, free, exit, atoi
+    \item \texttt{<string.h>}: String operations, memcpy, memset
+    \item \texttt{<stdint.h>}: Fixed-width integer types (int32\_t, uint64\_t, etc.)
+    \item \texttt{<stdbool.h>}: bool, true, false (C99+)
+    \item \texttt{<stddef.h>}: size\_t, NULL, offsetof
+    \item \texttt{<assert.h>}: Runtime assertions for debugging
+    \item \texttt{<errno.h>}: Error numbers for system calls
+\end{itemize}
+
+\section*{Compiler Flags You Should Use}
+
+\textbf{GCC/Clang:}
+\begin{verbatim}
+gcc -Wall -Wextra -Werror -std=c99 -O2 -g program.c
+\end{verbatim}
+
+\textbf{MSVC:}
+\begin{verbatim}
+cl /W4 /WX /std:c11 /O2 program.c
+\end{verbatim}
+
+\section*{Debugging Tools}
+
+\begin{itemize}
+    \item \textbf{valgrind}: Memory leak detection and profiling
+    \item \textbf{gdb}: GNU debugger
+    \item \textbf{lldb}: LLVM debugger
+    \item \textbf{AddressSanitizer}: Detects memory errors at runtime
+    \item \textbf{cppcheck}: Static analysis for C/C++
+    \item \textbf{clang-tidy}: Linter and static analyzer
+\end{itemize}
+
+% Appendix B: Resources
+\chapter{Appendix B: Recommended Resources}
+
+\section*{Essential Books}
+
+\begin{itemize}
+    \item \textbf{The C Programming Language} by Kernighan \& Ritchie — The classic. Read it.
+    \item \textbf{Expert C Programming} by Peter van der Linden — Deep insights and war stories
+    \item \textbf{C Interfaces and Implementations} by David Hanson — Real-world design patterns
+    \item \textbf{Modern C} by Jens Gustedt — C11/C17 features and modern practices
+    \item \textbf{21st Century C} by Ben Klemens — Contemporary C development
+\end{itemize}
+
+\section*{Online Resources}
+
+\begin{itemize}
+    \item \textbf{cppreference.com}: Comprehensive C and C++ reference
+    \item \textbf{C FAQ}: \url{http://c-faq.com/} — Answers to common questions
+    \item \textbf{Stack Overflow}: Tag [c] — Community Q\&A
+    \item \textbf{CERT C Coding Standard}: Security-focused guidelines
+    \item \textbf{SEI CERT C}: Safe, secure, and reliable C
+\end{itemize}
+
+\section*{Code to Study}
+
+\begin{itemize}
+    \item \textbf{SQLite}: \url{https://sqlite.org/} — Best-written C code in existence
+    \item \textbf{Redis}: \url{https://redis.io/} — Clean, readable systems code
+    \item \textbf{Git}: \url{https://git-scm.com/} — Real-world C project structure
+    \item \textbf{Nginx}: \url{https://nginx.org/} — High-performance network server
+    \item \textbf{Linux Kernel}: \url{https://kernel.org/} — Ultimate C codebase (advanced)
+\end{itemize}
+
+\section*{Development Tools}
+
+\begin{itemize}
+    \item \textbf{Compilers}: GCC, Clang, MSVC
+    \item \textbf{Build Systems}: Make, CMake, Meson
+    \item \textbf{Version Control}: Git (obviously)
+    \item \textbf{Editors/IDEs}: VS Code, CLion, Vim/Emacs
+    \item \textbf{Documentation}: Doxygen, Sphinx
+\end{itemize}
+
+\section*{Communities}
+
+\begin{itemize}
+    \item \textbf{r/C\_Programming}: Reddit community
+    \item \textbf{comp.lang.c}: Usenet newsgroup (still active!)
+    \item \textbf{Freenode \#c}: IRC channel
+    \item \textbf{C Discord servers}: Real-time chat communities
+\end{itemize}
+
+\section*{Academic Papers and Standards}
+
+\begin{itemize}
+    \item \textbf{ISO/IEC 9899:2018}: The official C17/C18 standard document
+    \item \textbf{ISO/IEC 9899:2011}: The C11 standard (previous version)
+    \item \textbf{ISO/IEC 9899:1999}: The C99 standard
+    \item \textbf{MISRA C}: Guidelines for the use of C in critical systems
+    \item \textbf{SEI CERT C Coding Standard}: Secure coding practices
+\end{itemize}
+
+% Bibliography
+\chapter{Bibliography and References}
+
+\section*{Foundational Books}
+
+\begin{enumerate}
+    \item Kernighan, Brian W., and Dennis M. Ritchie. \textit{The C Programming Language}. 2nd ed. Prentice Hall, 1988.
+
+    \textit{The definitive C book by the language's creators. Every C programmer should read this at least once.}
+
+    \item van der Linden, Peter. \textit{Expert C Programming: Deep C Secrets}. Prentice Hall, 1994.
+
+    \textit{Filled with insights, war stories, and explanations of C's quirks. Entertaining and educational.}
+
+    \item Hanson, David R. \textit{C Interfaces and Implementations: Techniques for Creating Reusable Software}. Addison-Wesley, 1997.
+
+    \textit{Shows how to design professional C libraries with clean interfaces. Essential for API design.}
+
+    \item Gustedt, Jens. \textit{Modern C}. Manning Publications, 2019.
+
+    \textit{Focuses on C11 and C17 features. Shows modern approaches to C programming.}
+
+    \item Klemens, Ben. \textit{21st Century C: C Tips from the New School}. 2nd ed. O'Reilly Media, 2014.
+
+    \textit{Contemporary C development practices, build systems, and tooling.}
+
+    \item Seacord, Robert C. \textit{Effective C: An Introduction to Professional C Programming}. No Starch Press, 2020.
+
+    \textit{Modern best practices and secure coding techniques for C.}
+
+    \item Prinz, Peter, and Tony Crawford. \textit{C in a Nutshell}. 2nd ed. O'Reilly Media, 2015.
+
+    \textit{Comprehensive reference covering C11 standard library and features.}
+\end{enumerate}
+
+\section*{Systems Programming and Design}
+
+\begin{enumerate}
+    \item Stevens, W. Richard, and Stephen A. Rago. \textit{Advanced Programming in the UNIX Environment}. 3rd ed. Addison-Wesley, 2013.
+
+    \textit{The bible of Unix systems programming. Essential for understanding POSIX APIs.}
+
+    \item Kerrisk, Michael. \textit{The Linux Programming Interface}. No Starch Press, 2010.
+
+    \textit{Comprehensive guide to Linux and UNIX system programming. Over 1500 pages of detailed information.}
+
+    \item Love, Robert. \textit{Linux System Programming}. 2nd ed. O'Reilly Media, 2013.
+
+    \textit{System calls, I/O, process management, and threading on Linux.}
+
+    \item Bryant, Randal E., and David R. O'Hallaron. \textit{Computer Systems: A Programmer's Perspective}. 3rd ed. Pearson, 2015.
+
+    \textit{How C maps to hardware. Essential for understanding performance and optimization.}
+\end{enumerate}
+
+\section*{Data Structures and Algorithms}
+
+\begin{enumerate}
+    \item Cormen, Thomas H., et al. \textit{Introduction to Algorithms}. 4th ed. MIT Press, 2022.
+
+    \textit{The comprehensive algorithms textbook. Many examples are in pseudocode but applicable to C.}
+
+    \item Sedgewick, Robert. \textit{Algorithms in C}. 3rd ed. Addison-Wesley, 1997-2002. (Parts 1-5)
+
+    \textit{Classic algorithms book with all code in C. Practical implementations.}
+
+    \item Loudon, Kyle. \textit{Mastering Algorithms with C}. O'Reilly Media, 1999.
+
+    \textit{Practical data structures and algorithms specifically in C.}
+\end{enumerate}
+
+\section*{Memory Management and Performance}
+
+\begin{enumerate}
+    \item Hagar, Jon. \textit{Software Test Attacks to Break Mobile and Embedded Devices}. CRC Press, 2013.
+
+    \textit{Memory management and testing techniques for embedded systems.}
+
+    \item Gerber, Richard, et al. \textit{Software Optimization Cookbook}. 2nd ed. Intel Press, 2006.
+
+    \textit{Performance optimization techniques for C/C++ on Intel architectures.}
+
+    \item Fog, Agner. \textit{Optimizing Software in C++}. 2023. Available online at \url{https://agner.org/optimize/}
+
+    \textit{Deep dive into CPU optimization, though focused on C++, many techniques apply to C.}
+\end{enumerate}
+
+\section*{Secure Coding and Safety}
+
+\begin{enumerate}
+    \item Seacord, Robert C. \textit{Secure Coding in C and C++}. 2nd ed. Addison-Wesley, 2013.
+
+    \textit{Security vulnerabilities in C and how to prevent them. Essential for production code.}
+
+    \item Wheeler, David A. \textit{Secure Programming HOWTO}. Available at \url{https://dwheeler.com/secure-programs/}
+
+    \textit{Free online guide to writing secure programs in C/C++.}
+
+    \item CERT Division. \textit{SEI CERT C Coding Standard}. Software Engineering Institute, Carnegie Mellon University. Available at \url{https://wiki.sei.cmu.edu/confluence/display/c/}
+
+    \textit{Rules and recommendations for secure C programming.}
+\end{enumerate}
+
+\section*{Notable Open Source Codebases}
+
+\textit{(These are not books but essential reading for learning professional C patterns)}
+
+\begin{enumerate}
+    \item \textbf{SQLite} — \url{https://sqlite.org/}
+
+    \textit{Arguably the best-written C code in existence. Extensively tested, well-documented, and demonstrates professional practices throughout.}
+
+    \item \textbf{Redis} — \url{https://redis.io/}
+
+    \textit{Clean, readable C code. Excellent use of data structures. The codebase is approachable and well-commented.}
+
+    \item \textbf{Git} — \url{https://git-scm.com/}
+
+    \textit{Real-world project structure, cross-platform support, and practical C idioms. Shows how to organize a large C project.}
+
+    \item \textbf{Nginx} — \url{https://nginx.org/}
+
+    \textit{High-performance network programming. Event-driven architecture and optimization techniques.}
+
+    \item \textbf{cURL} — \url{https://curl.se/}
+
+    \textit{Cross-platform HTTP library. Shows extensive platform abstraction and API design.}
+
+    \item \textbf{Linux Kernel} — \url{https://kernel.org/}
+
+    \textit{The ultimate C codebase. Advanced patterns, intrusive data structures, and systems programming at scale.}
+
+    \item \textbf{FFmpeg} — \url{https://ffmpeg.org/}
+
+    \textit{Multimedia processing. Complex algorithms, performance optimization, and extensive hardware support.}
+
+    \item \textbf{libuv} — \url{https://libuv.org/}
+
+    \textit{Cross-platform asynchronous I/O library. Powers Node.js. Excellent cross-platform abstraction.}
+\end{enumerate}
+
+\section*{Online Documentation and Standards}
+
+\begin{enumerate}
+    \item \textbf{cppreference.com} — \url{https://en.cppreference.com/}
+
+    \textit{Comprehensive C and C++ reference with examples. Community-maintained and highly accurate.}
+
+    \item \textbf{The C FAQ} — \url{http://c-faq.com/}
+
+    \textit{Frequently Asked Questions about C, compiled by Steve Summit. Answers to common pitfalls.}
+
+    \item \textbf{ISO C Standard} (ISO/IEC 9899)
+
+    \textit{The official language specification. Available for purchase or as drafts online.}
+
+    \item \textbf{POSIX Standard} (IEEE Std 1003.1)
+
+    \textit{Portable Operating System Interface specification. Defines standard Unix APIs.}
+
+    \item \textbf{GNU C Library Documentation} — \url{https://www.gnu.org/software/libc/manual/}
+
+    \textit{Complete reference for glibc, the C standard library on GNU/Linux systems.}
+\end{enumerate}
+
+\section*{Tools Documentation}
+
+\begin{enumerate}
+    \item \textbf{GCC Manual} — \url{https://gcc.gnu.org/onlinedocs/}
+
+    \textit{Complete documentation for the GNU Compiler Collection.}
+
+    \item \textbf{Clang Documentation} — \url{https://clang.llvm.org/docs/}
+
+    \textit{LLVM C/C++ compiler documentation and usage guides.}
+
+    \item \textbf{Valgrind User Manual} — \url{https://valgrind.org/docs/manual/}
+
+    \textit{Memory debugging and profiling tools documentation.}
+
+    \item \textbf{GDB Manual} — \url{https://sourceware.org/gdb/documentation/}
+
+    \textit{The GNU Debugger comprehensive documentation.}
+
+    \item \textbf{CMake Documentation} — \url{https://cmake.org/documentation/}
+
+    \textit{Cross-platform build system widely used for C projects.}
+\end{enumerate}
+
+\section*{Historical and Background Reading}
+
+\begin{enumerate}
+    \item Ritchie, Dennis M. ``The Development of the C Language.'' \textit{ACM SIGPLAN Notices} 28.3 (1993): 201-208.
+
+    \textit{Dennis Ritchie's own account of how C was created. Essential historical context.}
+
+    \item Kernighan, Brian W. ``The C Programming Language and Its Impact.'' Various talks and papers.
+
+    \textit{Reflections on C's design philosophy and influence.}
+
+    \item Pike, Rob. ``Notes on Programming in C.'' February 21, 1989.
+
+    \textit{Programming style guidelines from one of Unix's creators. Still relevant today.}
+
+    \item Thompson, Ken. ``Reflections on Trusting Trust.'' \textit{Communications of the ACM} 27.8 (1984): 761-763.
+
+    \textit{Famous Turing Award lecture on security and compilers. Classic paper.}
+\end{enumerate}
+
+\section*{Style Guides and Conventions}
+
+\begin{enumerate}
+    \item \textbf{Linux Kernel Coding Style} — \url{https://www.kernel.org/doc/html/latest/process/coding-style.html}
+
+    \textit{Linus Torvalds' style guide for kernel code. Opinionated but influential.}
+
+    \item \textbf{GNU Coding Standards} — \url{https://www.gnu.org/prep/standards/}
+
+    \textit{Style and design conventions for GNU project software.}
+
+    \item \textbf{Google C++ Style Guide} (applicable to C in many ways)
+
+    \textit{Modern corporate coding standards with rationale for each rule.}
+
+    \item \textbf{MISRA C Guidelines}
+
+    \textit{Coding standards for safety-critical systems. Restrictive but important for embedded/automotive.}
+\end{enumerate}
+
+\section*{Communities and Forums}
+
+\begin{itemize}
+    \item \textbf{Stack Overflow} — Tag [c] — \url{https://stackoverflow.com/questions/tagged/c}
+    \item \textbf{Reddit r/C\_Programming} — \url{https://reddit.com/r/C_Programming}
+    \item \textbf{comp.lang.c} — Usenet newsgroup (via Google Groups or news reader)
+    \item \textbf{Freenode \#c} — IRC channel for C programming discussions
+    \item \textbf{C Discord servers} — Various real-time chat communities
+\end{itemize}
+
+\vspace{2em}
+
+\textit{Note: URLs and availability of resources are current as of 2025. Some resources may move or become unavailable over time. Use search engines to locate current versions if links are broken.}
+
+% Errata
+\chapter{Errata and Updates}
+
+\section*{How to Report Errors}
+
+Despite careful review, technical books inevitably contain errors. If you find mistakes in this book—whether technical errors, typos, or unclear explanations—please report them.
+
+\textbf{Reporting Issues:}
+
+\begin{itemize}
+    \item \textbf{Repository}: \url{https://codeberg.org/_a/C_Idioms_And_Patterns/issues}
+    \item \textbf{Include}: Page number, section title, description of the issue, and suggested correction if possible
+\end{itemize}
+
+\section*{Known Errata}
+
+\textit{This section will be updated with confirmed errors and corrections. Check the repository for the most current errata list.}
+
+\subsection*{First Edition (2025)}
+
+\textit{No confirmed errata at time of publication.}
+
+\vspace{1em}
+
+\textbf{Major Corrections:}
+
+\textit{(None yet)}
+
+\vspace{1em}
+
+\textbf{Minor Corrections:}
+
+\textit{(None yet)}
+
+\vspace{1em}
+
+\textbf{Clarifications:}
+
+\textit{(None yet)}
+
+\section*{Online Resources}
+
+\textbf{Book Repository}: \url{https://codeberg.org/_a/C_Idioms_And_Patterns}
+
+All code examples from this book are available in the repository, organized by chapter. The repository includes:
+\begin{itemize}
+    \item Complete, compilable versions of all examples
+    \item Additional examples not in the book
+    \item Makefiles for easy compilation
+    \item Test cases and validation scripts
+    \item Solutions to exercises (if applicable)
+\end{itemize}
+
+\section*{Updates and New Editions}
+
+C evolves slowly, but tools, practices, and platforms change. Major updates or corrections will be documented here and on the book's website.
+
+For significant changes that warrant a new edition:
+\begin{itemize}
+    \item Major new C standards (C2x when finalized)
+    \item Significant platform changes (new OS versions, compiler updates)
+    \item Discovery of major technical errors
+    \item Reader feedback indicating sections need rewriting
+\end{itemize}
+
+\textbf{Current Edition}: First Edition, 2025
+
+\section*{Contributing}
+
+If you'd like to contribute:
+\begin{itemize}
+    \item \textbf{Corrections}: Submit via repository issues
+    \item \textbf{Suggestions}: Ideas for additional content or improvements
+    \item \textbf{Examples}: Better code examples or real-world use cases
+    \item \textbf{Translations}: Contact via repository if interested in translating
+\end{itemize}
+
+Thank you to everyone who helps improve this book!
+
+% Glossary
+\chapter{Glossary of C Terms}
+
+\section*{A}
+
+\textbf{Address Sanitizer (ASan)}: A runtime memory error detector that finds bugs like buffer overflows, use-after-free, and memory leaks.
+
+\textbf{Alignment}: The requirement that data be stored at memory addresses divisible by certain values (e.g., 4-byte ints at addresses divisible by 4).
+
+\textbf{Arena Allocator}: A memory allocation strategy where you allocate a large block once, then sub-allocate from it quickly, and free everything at once.
+
+\textbf{Arithmetic Overflow}: When an arithmetic operation produces a result larger than the maximum value the type can hold.
+
+\section*{B}
+
+\textbf{Binary Search Tree (BST)}: A tree data structure where each node has at most two children, with left < parent < right.
+
+\textbf{Bit Field}: A struct member that occupies only a specified number of bits, used to pack multiple small values.
+
+\textbf{Bloom Filter}: A probabilistic data structure that tests set membership with possible false positives but no false negatives.
+
+\textbf{Buffer Overflow}: Writing data beyond the allocated bounds of a buffer, causing undefined behavior and security vulnerabilities.
+
+\section*{C}
+
+\textbf{Callback}: A function pointer passed to another function, which the other function calls at appropriate times.
+
+\textbf{Circular Buffer}: A fixed-size buffer that wraps around when full, useful for queues and streaming data.
+
+\textbf{Compound Literal}: A C99 feature that creates unnamed objects: \texttt{(struct Point)\{10, 20\}}.
+
+\textbf{Const Correctness}: Using \texttt{const} appropriately to indicate which data should not be modified.
+
+\section*{D}
+
+\textbf{Dangling Pointer}: A pointer that points to memory that has been freed or is otherwise invalid.
+
+\textbf{Designated Initializer}: C99 syntax for initializing specific struct members: \texttt{\{.x = 10, .y = 20\}}.
+
+\textbf{Double Free}: Calling \texttt{free()} twice on the same pointer, causing undefined behavior.
+
+\textbf{Dynamic Array}: A resizable array that grows automatically, implemented with \texttt{realloc()}.
+
+\section*{E}
+
+\textbf{Endianness}: The byte order in which multi-byte numbers are stored (big-endian vs little-endian).
+
+\textbf{errno}: A global variable set by system calls to indicate the type of error that occurred.
+
+\section*{F}
+
+\textbf{Flexible Array Member}: A C99 feature where the last struct member can be an array of unspecified size.
+
+\textbf{Forward Declaration}: Declaring something before defining it, allowing references before the full definition.
+
+\textbf{Function Pointer}: A pointer that points to a function, enabling callbacks and runtime polymorphism.
+
+\section*{G}
+
+\textbf{Generic Programming}: Writing code that works with multiple types, typically using macros or void pointers in C.
+
+\section*{H}
+
+\textbf{Hash Function}: A function that converts data into a fixed-size hash value, used by hash tables.
+
+\textbf{Hash Table}: A data structure providing O(1) average-case lookup by mapping keys to array indices via hashing.
+
+\textbf{Header Guard}: Preprocessor directives preventing multiple inclusion: \texttt{\#ifndef}, \texttt{\#define}, \texttt{\#endif}.
+
+\section*{I}
+
+\textbf{Intrusive Data Structure}: A data structure where link pointers are embedded directly in the objects being linked.
+
+\textbf{Implementation-Defined Behavior}: Behavior that varies by compiler but must be documented (e.g., size of \texttt{int}).
+
+\section*{L}
+
+\textbf{Linkage}: The visibility of identifiers across translation units (external, internal, or no linkage).
+
+\section*{M}
+
+\textbf{Memory Leak}: Allocated memory that is never freed, causing memory consumption to grow over time.
+
+\textbf{Memory Pool}: Pre-allocated memory divided into fixed-size chunks for fast allocation.
+
+\section*{N}
+
+\textbf{Null Pointer}: A pointer with value NULL (or 0), indicating it doesn't point to valid memory.
+
+\section*{O}
+
+\textbf{Opaque Pointer}: A pointer to an incomplete type, hiding implementation details from users.
+
+\textbf{Overflow}: See Arithmetic Overflow or Buffer Overflow.
+
+\section*{P}
+
+\textbf{Padding}: Extra bytes inserted by the compiler between struct members to satisfy alignment requirements.
+
+\textbf{Pointer Arithmetic}: Performing addition/subtraction on pointers, moving by multiples of the pointed-to type's size.
+
+\section*{S}
+
+\textbf{Segmentation Fault}: A runtime error occurring when a program tries to access memory it doesn't have permission to access.
+
+\textbf{Stack}: The memory region where local variables and function call information are stored.
+
+\textbf{Static}: Keyword with multiple meanings: file-scope linkage, persistent local variables, or compile-time allocation.
+
+\section*{U}
+
+\textbf{Undefined Behavior (UB)}: Code whose behavior is not defined by the C standard, potentially causing crashes or unpredictable results.
+
+\textbf{Union}: A data type where all members share the same memory location.
+
+\section*{V}
+
+\textbf{Volatile}: Keyword indicating a variable may be modified by external sources, preventing compiler optimizations.
+
+\textbf{VTable}: Virtual function table, a pattern for implementing runtime polymorphism in C using function pointers.
+
+\end{document}
