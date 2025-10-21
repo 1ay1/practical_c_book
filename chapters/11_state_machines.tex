@@ -1685,9 +1685,9 @@ Most state machines are fast enough without optimization. But in hot paths (game
     \item \textbf{Avoid function pointers}: Direct calls are faster than indirect
 \end{itemize}
 
-The table-based approach shown here trades memory for speed. If you have 32 states and 32 events, you need a 32\times32 table (1KB). But each lookup is just two array accesses---no searching, no function calls.
+The table-based approach shown here trades memory for speed. If you have 32 states and 32 events, you need a $32\times32$ table (1KB). But each lookup is just two array accesses---no searching, no function calls.
 
-\textbf{Measurement matters}: Profile before optimizing. Most state machines aren't bottlenecks. But when they are, these techniques can speed them up 10-100\times.
+\textbf{Measurement matters}: Profile before optimizing. Most state machines aren't bottlenecks. But when they are, these techniques can speed them up 10-100$\times$.
 
 \begin{lstlisting}
 // Optimize state transitions with perfect hashing
