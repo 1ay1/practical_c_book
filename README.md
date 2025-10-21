@@ -43,14 +43,13 @@ All formats are automatically built and released via GitHub Actions:
 Available formats:
 - **PDF (Standard)** - `practical-c-book.pdf` - Optimized for screen reading and printing
 - **PDF (Kindle)** - `practical-c-book-kindle.pdf` - Larger text, optimized for Kindle devices
-- **EPUB** - `practical-c-book.epub` - For e-readers (Kobo, Apple Books, etc.)
 - **Source Code** - `practical-c-book-source.tar.gz` - Full LaTeX source
 
 ### File Information
 
-- **Format**: PDF, EPUB
-- **Size**: ~3-4 MB (varies by format)
-- **Optimized for**: Kindle, tablets, desktop reading, e-readers
+- **Format**: PDF
+- **Size**: ~3-4 MB (varies by version)
+- **Optimized for**: Kindle, tablets, desktop reading
 - **Updates**: Automatically built on every release tag
 
 ## ⚠️ Important: This Is NOT a Beginner Book
@@ -92,9 +91,6 @@ make kindle
 
 # Build both PDFs
 make both
-
-# Build EPUB format
-make epub
 
 # Or use the build script
 ./build.sh
@@ -233,7 +229,7 @@ If you found this book useful, give it a star on GitHub!
 This repository uses GitHub Actions to automatically build and release the book in multiple formats:
 - Every push to `main` creates build artifacts
 - Every tagged release (e.g., `v1.0`) creates a GitHub Release with all formats
-- All builds include: Standard PDF, Kindle PDF, EPUB, and source code archive
+- All builds include: Standard PDF, Kindle PDF, and source code archive
 
 ---
 

@@ -21,7 +21,7 @@ jobs:
       - name: Update system and install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm texlive-core texlive-bin texlive-latexextra texlive-fontsextra texlive-fontsrecommended calibre tar gzip git base-devel
+          pacman -S --noconfirm texlive-core texlive-bin texlive-latexextra texlive-fontsextra texlive-fontsrecommended tar gzip git base-devel
 
       - name: Build standard PDF
         run: |
@@ -31,10 +31,6 @@ jobs:
         run: |
           make kindle
 
-      - name: Build EPUB
-        run: |
-          make epub
-
       - name: Create source archive
         run: |
           tar -czf practical-c-book-source.tar.gz --exclude='.git' --exclude='*.aux' --exclude='*.log' --exclude='*.out' --exclude='*.toc' --exclude='*.fdb_latexmk' --exclude='*.fls' --exclude='*.synctex.gz' --exclude='*.pdf' .
@@ -43,7 +39,6 @@ jobs:
         run: |
           cp main.pdf practical-c-book.pdf
           cp main_kindle.pdf practical-c-book-kindle.pdf
-          cp main.epub practical-c-book.epub
 
       - name: Get version
         id: get_version
@@ -62,7 +57,6 @@ jobs:
           files: |
             practical-c-book.pdf
             practical-c-book-kindle.pdf
-            practical-c-book.epub
             practical-c-book-source.tar.gz
           draft: false
           prerelease: false
@@ -78,6 +72,5 @@ jobs:
           path: |
             practical-c-book.pdf
             practical-c-book-kindle.pdf
-            practical-c-book.epub
             practical-c-book-source.tar.gz
           retention-days: 30
