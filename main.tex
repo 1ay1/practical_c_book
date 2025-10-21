@@ -18,29 +18,30 @@
 \usepackage{titlesec}
 \usepackage{amssymb}
 
-% Colors for code
-\definecolor{codebg}{RGB}{245,245,245}
-\definecolor{keywordcolor}{RGB}{0,0,255}
-\definecolor{stringcolor}{RGB}{163,21,21}
-\definecolor{commentcolor}{RGB}{0,128,0}
+% Colors for code - improved but subtle
+\definecolor{codebg}{RGB}{248,248,250}
+\definecolor{keywordcolor}{RGB}{170,13,145}
+\definecolor{stringcolor}{RGB}{196,26,22}
+\definecolor{commentcolor}{RGB}{87,166,74}
 \definecolor{warningcolor}{RGB}{255,140,0}
 \definecolor{tipcolor}{RGB}{70,130,180}
 
-% Code listing setup
+% Code listing setup - slightly improved
 \lstset{
     basicstyle=\small\ttfamily,
     keywordstyle=\color{keywordcolor}\bfseries,
     stringstyle=\color{stringcolor},
     commentstyle=\color{commentcolor}\itshape,
-    numberstyle=\tiny,
+    numberstyle=\tiny\color{gray},
     numbers=left,
     stepnumber=1,
-    numbersep=5pt,
+    numbersep=8pt,
     backgroundcolor=\color{codebg},
     showspaces=false,
     showstringspaces=false,
     showtabs=false,
     frame=single,
+    framesep=8pt,
     tabsize=4,
     captionpos=b,
     breaklines=true,
@@ -49,26 +50,32 @@
     language=C
 }
 
-% Custom boxes
+% Custom boxes - slightly improved appearance
 \newtcolorbox{warningbox}{
     colback=warningcolor!5!white,
     colframe=warningcolor,
     title=\textbf{Warning},
-    fonttitle=\bfseries
+    fonttitle=\bfseries,
+    boxrule=0.8pt,
+    arc=2pt
 }
 
 \newtcolorbox{tipbox}{
     colback=tipcolor!5!white,
     colframe=tipcolor,
     title=\textbf{Pro Tip},
-    fonttitle=\bfseries
+    fonttitle=\bfseries,
+    boxrule=0.8pt,
+    arc=2pt
 }
 
 \newtcolorbox{notebox}{
     colback=yellow!10!white,
     colframe=yellow!80!black,
     title=\textbf{Note},
-    fonttitle=\bfseries
+    fonttitle=\bfseries,
+    boxrule=0.8pt,
+    arc=2pt
 }
 
 % Header/Footer
