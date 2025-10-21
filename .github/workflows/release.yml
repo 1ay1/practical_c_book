@@ -21,7 +21,7 @@ jobs:
       - name: Update system and install dependencies
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm texlive-core texlive-bin texlive-latexextra texlive-fontsextra calibre tar gzip git base-devel
+          pacman -S --noconfirm texlive-core texlive-bin texlive-latexextra texlive-fontsextra texlive-fontsrecommended calibre tar gzip git base-devel
 
       - name: Build standard PDF
         run: |
