@@ -63,71 +63,625 @@ const char* command_name(Command cmd) {
 
 \section{Coroutines in C}
 
-Implement cooperative multitasking without threads:
+\noindent\rule{\textwidth}{0.4pt}
+
+Coroutines provide cooperative multitasking without the overhead of threads or the complexity of callbacks. They allow functions to suspend execution and resume later, maintaining their local state between invocations. While C lacks native coroutine support, several clever techniques simulate this behavior.
+
+\begin{notebox}
+\textbf{What You'll Learn:} This section explores stackless coroutine implementations in C, from Simon Tatham's elegant macro-based approach to explicit state machines. You'll see practical applications in protocol parsing, generators, and async I/O.
+\end{notebox}
+
+\subsection{Understanding Coroutines}
+
+Before diving into implementation, we must understand what makes coroutines fundamentally different from ordinary functions. A normal function has a simple lifecycle: it begins execution, runs to completion, and returns. All local variables are destroyed when the function exits. Each call starts fresh with no memory of previous invocations.
+
+Coroutines break this model entirely. They introduce the concept of \textit{suspendable execution}---a function that can pause in the middle, return control to its caller, and later resume exactly where it left off. This seemingly simple change has profound implications for how we structure code.
+
+Coroutines differ from regular functions in key ways:
+
+\begin{description}[style=nextline,leftmargin=0pt]
+    \item[\textbf{Suspendable}] Can pause execution and return control to caller. Unlike a normal \texttt{return}, which destroys the function's context, a coroutine yield preserves everything. The instruction pointer, local variables, and execution state remain alive but dormant.
+
+    \item[\textbf{Resumable}] Can continue from where they left off. When called again, the coroutine doesn't start from the beginning. Instead, it resumes immediately after the last yield point, as if it never stopped.
+
+    \item[\textbf{State Preservation}] Maintain local variables across invocations. This is the key challenge in C. Languages with native coroutine support handle this automatically, but in C, we must explicitly preserve state between calls using static variables or context structures.
+
+    \item[\textbf{Cooperative}] Explicitly yield control (unlike preemptive threads). The coroutine decides when to suspend. This eliminates race conditions and the need for locks, but requires careful design to avoid one coroutine monopolizing CPU time.
+\end{description}
+
+The power of coroutines becomes apparent when dealing with complex state machines, parsers, or any algorithm that naturally involves multiple stages. Instead of writing explicit state tracking code with switch statements and state variables, the coroutine's execution flow itself represents the state. This makes code more readable and maintainable.
+
+\subsection{Simon Tatham's Coroutine Macros}
+
+\begin{tipbox}
+\textbf{The Elegant Solution:} Simon Tatham's coroutine macros represent one of the most clever uses of C preprocessor magic. By combining Duff's Device with \texttt{\_\_LINE\_\_}, they create automatic state machines with minimal boilerplate.
+\end{tipbox}
+
+\vspace{0.3cm}
+
+The most elegant stackless coroutine implementation uses Duff's Device and the \texttt{\_\_LINE\_\_} macro. This technique, devised by Simon Tatham, is a masterpiece of macro engineering. It exploits an obscure interaction between C's switch statement and the preprocessor to create automatic state machines.
+
+\textbf{The Fundamental Insight:} C allows case labels anywhere within a switch statement, even nested inside other constructs like loops. Combined with the \texttt{\_\_LINE\_\_} macro (which expands to the current source line number), we can create unique state identifiers automatically. Each yield point gets a different line number, providing a natural way to track where execution should resume.
 
 \begin{lstlisting}
-// Simon Tatham's coroutine trick
+// Coroutine macros using line numbers for state
 #define crBegin static int state=0; switch(state) { case 0:
 #define crReturn(x) do { state=__LINE__; return x; \
                          case __LINE__:; } while(0)
 #define crFinish }
 
-// Example: State machine as coroutine
-int parser(int input) {
-    static int count = 0;
+// Simple example: Generate Fibonacci numbers
+int fibonacci(void) {
+    static int a = 0, b = 1;
 
     crBegin;
 
     while(1) {
-        // Wait for start marker
-        while(input != START) {
-            crReturn(WAITING);
-        }
-
-        count = 0;
-        // Read data bytes
-        while(count < 10) {
-            crReturn(READING);
-            count++;
-        }
-
-        // Process complete packet
-        process_packet();
-        crReturn(COMPLETE);
+        crReturn(a);
+        int temp = a;
+        a = b;
+        b = temp + b;
     }
 
     crFinish;
+    return 0;
 }
 
-// Duff's Device implementation
+// Usage
+for(int i = 0; i < 10; i++) {
+    printf("%d ", fibonacci());  // 0 1 1 2 3 5 8 13 21 34
+}
+\end{lstlisting}
+
+\vspace{0.3cm}
+\noindent\textbf{Understanding the Parser:}
+
+This parser demonstrates several important coroutine patterns. First, notice how the control flow reads naturally from top to bottom, just like you'd describe the protocol in English: ``read the header until you find a blank line, extract the content length, allocate a buffer, read the body, then process the request.''
+
+The \texttt{crReturn} calls represent points where we need more data. In a traditional blocking implementation, these would be blocking reads. In a callback-based implementation, each would be a separate function. Here, they're simple yield points---the function pauses, returns control to the caller (who presumably will provide more data), and resumes when called again.
+
+The static variables preserve all state: where we are in the header, how much body we've read, what the content length is. This is essential because each call to the parser might provide only one byte of data. The coroutine accumulates this data incrementally, maintaining perfect knowledge of its progress through the protocol.
+
+Error handling becomes more natural too. Instead of propagating error codes through multiple callback functions, we can simply return an ERROR state and reset. The sequential flow makes it easy to see the happy path and the error conditions.
+
+\begin{warningbox}
+\textbf{Memory Management Caveat:} Notice that we allocate \texttt{body} with malloc and must remember to free it. In a more robust implementation, you'd want cleanup logic that runs even if the parser is abandoned mid-stream. This is one area where stackless coroutines show their limitations---you can't rely on automatic cleanup like you would with scope-based resource management.
+\end{warningbox}
+
+\vspace{0.3cm}
+\noindent\textbf{\large How It Works: A Deep Dive}
+
+\vspace{0.2cm}
+\noindent Let's dissect this mechanism in detail, because understanding it requires thinking about C preprocessing and control flow simultaneously.
+
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{First call:} When the function first executes, the static variable \texttt{state} is initialized to 0. The \texttt{crBegin} macro expands to declare this variable and open a switch statement with \texttt{case 0:}. Since \texttt{state} is 0, execution begins at this case label and proceeds normally.
+
+    \item \textbf{Yielding:} When \texttt{crReturn} executes, the preprocessor replaces \texttt{\_\_LINE\_\_} with the current source line number. This number is stored in \texttt{state}. The macro then returns from the function with the specified value. Crucially, because \texttt{state} is static, it persists after the function returns.
+
+    \item \textbf{Next call:} On the subsequent call, \texttt{state} still holds the line number from the previous yield. The switch statement now jumps directly to the case label with that line number. Because \texttt{crReturn} places a case label immediately after the return statement, execution resumes right where it left off.
+
+    \item \textbf{Static variables:} All state (like \texttt{a} and \texttt{b} in the Fibonacci example) must be static. This is the price of stackless coroutines---we cannot rely on the normal function call stack. Instead, we explicitly persist everything we need between invocations.
+\end{enumerate}
+
+\begin{warningbox}
+\textbf{Stackless Trade-off:} This technique is called ``stackless'' because it doesn't manipulate the actual call stack. You gain simplicity and portability, but lose automatic variable preservation. Every piece of state must be explicitly declared as static.
+\end{warningbox}
+
+\vspace{0.2cm}
+\noindent\textit{The genius of this approach is that the state machine is implicit.} You write code that looks like normal sequential logic, and the macros transform it into a state machine at compile time. The alternative---hand-coding the state machine---is error-prone and obscures the algorithm's logic.
+
+\vspace{0.5cm}
+\subsection{Protocol State Machine Example}
+
+\noindent\rule{\textwidth}{0.4pt}
+\vspace{0.2cm}
+
+Coroutines excel at implementing complex protocols without callback hell. Traditional callback-based approaches force you to split your logic across multiple functions, each handling one stage of the protocol. State must be passed around in context structures, and the overall flow becomes hard to follow.
+
+\textbf{The Advantage:} With coroutines, the entire protocol implementation lives in one function, written as straightforward sequential code. This is a game-changer for protocol implementations, parsers, and state machines. Let's examine a realistic protocol parser that demonstrates these advantages:
+
+\begin{lstlisting}
+typedef enum { WAITING, READING_HEADER, READING_BODY,
+               PROCESSING, COMPLETE, ERROR } State;
+
+// HTTP-like protocol parser as coroutine
+State http_parser(char* input, int len) {
+    static int state = 0;
+    static char header[256];
+    static int header_pos = 0;
+    static int content_length = 0;
+    static int body_pos = 0;
+    static char* body = NULL;
+
+    crBegin;
+
+    // Read header until blank line
+    header_pos = 0;
+    while(1) {
+        crReturn(READING_HEADER);
+
+        if(input[0] == '\n' && header_pos > 0 &&
+           header[header_pos-1] == '\n') {
+            header[header_pos] = '\0';
+            break;
+        }
+
+        if(header_pos < sizeof(header)-1) {
+            header[header_pos++] = input[0];
+        }
+    }
+
+    // Extract content length
+    content_length = parse_content_length(header);
+    if(content_length <= 0) {
+        crReturn(ERROR);
+    }
+
+    // Allocate and read body
+    body = malloc(content_length);
+    body_pos = 0;
+
+    while(body_pos < content_length) {
+        crReturn(READING_BODY);
+        body[body_pos++] = input[0];
+    }
+
+    // Process complete request
+    process_request(header, body, content_length);
+    free(body);
+
+    crReturn(COMPLETE);
+
+    // Reset for next request
+    state = 0;
+
+    crFinish;
+    return ERROR;
+}
+\end{lstlisting}
+
+\vspace{0.3cm}
+\noindent\textbf{Analyzing the Implementation:}
+
+This example illustrates the explicit approach's flexibility. The \texttt{CoroContext} structure contains all state: the current position in the state machine (\texttt{state}), loop counters (\texttt{i}, \texttt{j}), accumulated results (\texttt{total}), and buffers.
+
+The state machine has clear stages: initialization (state 0), input collection (state 1), processing (state 2), and output (state 3). Each state does a small amount of work and returns, allowing the caller to interleave multiple coroutines or respond to other events.
+
+Notice the fall-through behavior between some states (using comments to indicate this). State 0 initializes and immediately falls into state 1. This is deliberate---initialization completes instantly, so we don't need to yield. State 3, after outputting results, resets to state 0 for the next cycle.
+
+The processing stage (state 2) demonstrates ``yielding in a loop.'' It processes one character per call, yielding between each. This allows the coroutine to make incremental progress without blocking. In a real application, this might represent a computationally expensive operation that we want to spread over multiple frames or time slices.
+
+The return values (\texttt{CORO\_YIELDED} vs \texttt{CORO\_DONE}) inform the caller about the coroutine's status. This is more explicit than Simon Tatham's approach, where the return value typically carries application data. Here, we separate status from data, making the protocol cleaner.
+
+Multiple instances work naturally: just allocate multiple \texttt{CoroContext} structures. Each maintains independent state. This is perfect for scenarios like handling multiple network connections, where each connection needs its own parser coroutine.
+
+\vspace{0.5cm}
+\subsection{Explicit State Structure Approach}
+
+\noindent\rule{\textwidth}{0.4pt}
+\vspace{0.2cm}
+
+For more complex scenarios, explicit state management provides better control. While Simon Tatham's macros are elegant for simple cases, they have limitations: all state must be static (preventing multiple coroutine instances), and the macro magic can be hard to debug.
+
+\begin{tipbox}
+\textbf{When to Go Explicit:} Use explicit state structures when you need multiple coroutine instances, better debuggability, or fine-grained control over memory management. The trade-off is more boilerplate for transparency and flexibility.
+\end{tipbox}
+
+\vspace{0.2cm}
+\noindent An alternative approach uses explicit state structures. This is more verbose but offers significant advantages: you can have multiple coroutine instances, the state is visible and debuggable, and you have complete control over memory management and initialization.
+
+This approach effectively hand-codes what the macros generate automatically. You explicitly number your states and write the switch statement yourself.
+
+\begin{lstlisting}
 typedef struct {
     int state;
-    int i;
+    // Coroutine-specific state
+    int i, j;
     int total;
-} Coroutine;
+    char buffer[256];
+    size_t buffer_pos;
+} CoroContext;
 
-void process(Coroutine* co) {
-    switch(co->state) {
-        case 0: // Start
-            co->total = 0;
-            co->i = 0;
+typedef enum { CORO_RUNNING, CORO_YIELDED, CORO_DONE } CoroStatus;
 
-        case 1: // Loop
-            while(co->i < 100) {
-                co->total += co->i;
-                co->i++;
-                co->state = 1;
-                return; // Yield
+// Initialize coroutine
+void coro_init(CoroContext* ctx) {
+    memset(ctx, 0, sizeof(*ctx));
+}
+
+// Multi-stage data processor
+CoroStatus data_processor(CoroContext* ctx, char input) {
+    switch(ctx->state) {
+        case 0:  // Initialization
+            ctx->total = 0;
+            ctx->buffer_pos = 0;
+            ctx->state = 1;
+            // Fall through
+
+        case 1:  // Collect input until newline
+            if(input == '\n') {
+                ctx->buffer[ctx->buffer_pos] = '\0';
+                ctx->state = 2;
+                ctx->i = 0;
+                return CORO_YIELDED;
             }
 
-            printf("Total: %d\n", co->total);
-            co->state = 2;
+            if(ctx->buffer_pos < sizeof(ctx->buffer) - 1) {
+                ctx->buffer[ctx->buffer_pos++] = input;
+            }
+            return CORO_YIELDED;
 
-        case 2: // Done
-            return;
+        case 2:  // Process buffer (simulate slow operation)
+            // Process one character at a time, yielding between
+            while(ctx->i < ctx->buffer_pos) {
+                ctx->total += ctx->buffer[ctx->i];
+                ctx->i++;
+                return CORO_YIELDED;  // Yield after each char
+            }
+            ctx->state = 3;
+            // Fall through
+
+        case 3:  // Output result
+            printf("Processed: %s (sum=%d)\n",
+                   ctx->buffer, ctx->total);
+            ctx->state = 0;  // Reset
+            return CORO_DONE;
+    }
+
+    return CORO_DONE;
+}
+
+// Usage: Process input incrementally
+CoroContext ctx;
+coro_init(&ctx);
+
+const char* inputs = "Hello\nWorld\n";
+for(size_t i = 0; i < strlen(inputs); i++) {
+    CoroStatus status = data_processor(&ctx, inputs[i]);
+    if(status == CORO_DONE) {
+        coro_init(&ctx);  // Start new processing cycle
     }
 }
 \end{lstlisting}
+
+The prime generator showcases a more sophisticated example. It maintains a growing list of discovered primes, using them to test future candidates. This is a form of the Sieve of Eratosthenes, but implemented as a generator rather than a batch algorithm.
+
+Each call to \texttt{prime\_next} does just enough work to find one prime. The state persists between calls: the current candidate number, all previously discovered primes, and where we are in the testing process. This allows the caller to request primes one at a time, stopping whenever they have enough.
+
+The optimization inside the divisibility check is worth noting. We only test divisors up to the square root of the candidate (checked by \texttt{primes[i] * primes[i] > candidate}). This dramatically reduces the number of divisions needed, especially for large primes.
+
+Memory management is explicit here. The generator allocates and reallocates its internal prime list as needed, using a doubling strategy for amortized O(1) insertions. The caller must call \texttt{prime\_free} when done. This is manual but gives complete control over allocations.
+
+The key advantage over generating all primes upfront is flexibility. If you need the first million primes, a generator produces them incrementally, allowing processing to overlap with generation. If you only need primes until you find one meeting some condition, you can stop early without wasting computation. The generator's state is suspended, ready to continue if needed.
+
+This pattern extends to many scenarios: walking tree structures, generating permutations, producing infinite sequences, or reading large files line-by-line. The coroutine maintains complex traversal state while presenting a simple ``give me the next item'' interface.
+
+\vspace{0.5cm}
+\subsection{Generator Pattern}
+
+\noindent\rule{\textwidth}{0.4pt}
+\vspace{0.2cm}
+
+Coroutines naturally implement generators---functions that produce a sequence of values over time rather than all at once. Languages like Python and JavaScript have native generator syntax, but C requires manual implementation. Coroutines provide an elegant way to achieve similar behavior.
+
+\begin{notebox}
+\textbf{Key Insight:} A generator is just a coroutine that yields values. Instead of yielding to wait for input (like parsers), a generator yields to provide output. Each call produces the next value in the sequence.
+\end{notebox}
+
+\vspace{0.2cm}
+\noindent This pattern is incredibly useful for iteration, lazy evaluation, and working with sequences too large to fit in memory. Instead of generating an entire array upfront (which might be millions of elements), a generator produces values on demand.
+
+\begin{lstlisting}
+// Range generator with step
+typedef struct {
+    int current;
+    int end;
+    int step;
+    int state;
+} RangeGenerator;
+
+void range_init(RangeGenerator* gen, int start, int end, int step) {
+    gen->current = start;
+    gen->end = end;
+    gen->step = step;
+    gen->state = 0;
+}
+
+int range_next(RangeGenerator* gen, int* value) {
+    switch(gen->state) {
+        case 0:
+            if(gen->current >= gen->end) {
+                return 0;  // Done
+            }
+            *value = gen->current;
+            gen->current += gen->step;
+            return 1;  // Has value
+    }
+    return 0;
+}
+
+// Primes generator using Sieve approach
+typedef struct {
+    int state;
+    int candidate;
+    int* primes;
+    size_t prime_count;
+    size_t prime_capacity;
+} PrimeGenerator;
+
+void prime_init(PrimeGenerator* gen) {
+    gen->state = 0;
+    gen->candidate = 2;
+    gen->prime_count = 0;
+    gen->prime_capacity = 16;
+    gen->primes = malloc(gen->prime_capacity * sizeof(int));
+}
+
+int prime_next(PrimeGenerator* gen, int* value) {
+    switch(gen->state) {
+        case 0:  // First prime
+            *value = 2;
+            gen->primes[gen->prime_count++] = 2;
+            gen->candidate = 3;
+            gen->state = 1;
+            return 1;
+
+        case 1:  // Find next prime
+            while(1) {
+                int is_prime = 1;
+
+                // Check divisibility by known primes
+                for(size_t i = 0; i < gen->prime_count; i++) {
+                    if(gen->candidate % gen->primes[i] == 0) {
+                        is_prime = 0;
+                        break;
+                    }
+                    // Optimization: only check up to sqrt
+                    if(gen->primes[i] * gen->primes[i] > gen->candidate) {
+                        break;
+                    }
+                }
+
+                if(is_prime) {
+                    *value = gen->candidate;
+
+                    // Store prime for future checks
+                    if(gen->prime_count >= gen->prime_capacity) {
+                        gen->prime_capacity *= 2;
+                        gen->primes = realloc(gen->primes,
+                                            gen->prime_capacity * sizeof(int));
+                    }
+                    gen->primes[gen->prime_count++] = gen->candidate;
+
+                    gen->candidate += 2;  // Skip even numbers
+                    return 1;
+                }
+
+                gen->candidate += 2;
+            }
+    }
+    return 0;
+}
+
+void prime_free(PrimeGenerator* gen) {
+    free(gen->primes);
+}
+
+// Usage
+PrimeGenerator gen;
+prime_init(&gen);
+int prime;
+for(int i = 0; i < 20; i++) {
+    if(prime_next(&gen, &prime)) {
+        printf("%d ", prime);
+    }
+}
+prime_free(&gen);
+\end{lstlisting}
+
+This async file reader demonstrates integrating coroutines with non-blocking I/O. The file is opened with \texttt{O\_NONBLOCK}, meaning \texttt{read()} returns immediately rather than waiting for data. If no data is available, it returns -1 with \texttt{errno} set to \texttt{EAGAIN}.
+
+The state machine handles this explicitly. State 0 opens the file and immediately yields---even though opening might be fast, we yield for consistency. State 1 contains the main reading loop. Each iteration attempts a read. If it would block (\texttt{EAGAIN}), we yield, giving other coroutines a chance to run. The event loop will call us again later, and we'll retry the read.
+
+This is cooperative multitasking in action. Each coroutine does a small amount of work (one read attempt) and yields. No coroutine monopolizes the CPU. The event loop gives each coroutine a chance to make progress.
+
+When we reach EOF (\texttt{bytes\_read == 0}), we transition to the cleanup state. State 2 closes the file, reports statistics, and resets the state machine. Returning \texttt{ASYNC\_COMPLETE} tells the event loop this coroutine is done.
+
+The event loop implementation shows how multiple coroutines run concurrently. It maintains an array of active coroutines and polls each one every iteration. Completed coroutines are removed from the array. This is vastly simpler than traditional select/epoll event loops with callback registration.
+
+The \texttt{usleep(1000)} prevents busy-waiting. In a real implementation, you'd use \texttt{select()}, \texttt{poll()}, or \texttt{epoll()} to sleep until at least one file descriptor has data. The coroutine approach integrates naturally with these mechanisms---each coroutine represents an I/O operation, and the event loop drives them all forward.
+
+This pattern scales to thousands of concurrent operations. Each has its own state machine tracking where it is in the I/O sequence. They all share one thread, eliminating context switch overhead and synchronization complexity. This is how servers like nginx achieve high concurrency---though they often use more sophisticated coroutine libraries rather than hand-rolled state machines.
+
+\vspace{0.5cm}
+\subsection{Async I/O Simulation}
+
+\noindent\rule{\textwidth}{0.4pt}
+\vspace{0.2cm}
+
+Coroutines can simulate async operations without callbacks, providing a compelling alternative to traditional event-driven I/O. This is one of the most practical applications of coroutines in systems programming.
+
+\begin{tipbox}
+\textbf{The Async Advantage:} Coroutines let you write I/O code that looks synchronous but behaves asynchronously. The function appears to block at each I/O operation, but actually yields control. The result is readable, maintainable code with the efficiency of non-blocking I/O.
+\end{tipbox}
+
+\vspace{0.2cm}
+\noindent\textbf{The Problem with Callbacks:} Traditional async I/O forces you to fragment your logic. Reading a file becomes: start the read, register a callback, return. When data arrives, the callback fires, processes some data, starts another read, registers another callback, and so on. Each callback is a separate function, and you must manually thread state between them.
+
+\begin{lstlisting}
+typedef struct {
+    int state;
+    int fd;
+    char buffer[1024];
+    size_t bytes_read;
+    size_t total_read;
+} AsyncReader;
+
+typedef enum { ASYNC_PENDING, ASYNC_COMPLETE, ASYNC_ERROR } AsyncStatus;
+
+AsyncStatus async_read_file(AsyncReader* reader, const char* filename) {
+    switch(reader->state) {
+        case 0:  // Open file
+            reader->fd = open(filename, O_RDONLY | O_NONBLOCK);
+            if(reader->fd < 0) {
+                return ASYNC_ERROR;
+            }
+            reader->total_read = 0;
+            reader->state = 1;
+            return ASYNC_PENDING;
+
+        case 1:  // Read chunk
+            reader->bytes_read = read(reader->fd, reader->buffer,
+                                     sizeof(reader->buffer));
+
+            if(reader->bytes_read < 0) {
+                if(errno == EAGAIN || errno == EWOULDBLOCK) {
+                    return ASYNC_PENDING;  // Would block, yield
+                }
+                close(reader->fd);
+                return ASYNC_ERROR;
+            }
+
+            if(reader->bytes_read == 0) {
+                // EOF
+                reader->state = 2;
+                return ASYNC_PENDING;
+            }
+
+            // Process data
+            process_data(reader->buffer, reader->bytes_read);
+            reader->total_read += reader->bytes_read;
+
+            // Continue reading
+            return ASYNC_PENDING;
+
+        case 2:  // Cleanup
+            close(reader->fd);
+            printf("Total read: %zu bytes\n", reader->total_read);
+            reader->state = 0;
+            return ASYNC_COMPLETE;
+    }
+
+    return ASYNC_ERROR;
+}
+
+// Event loop integration
+void event_loop(void) {
+    AsyncReader readers[MAX_READERS];
+    int active_count = 0;
+
+    // ... initialize readers ...
+
+    while(active_count > 0) {
+        for(int i = 0; i < active_count; i++) {
+            AsyncStatus status = async_read_file(&readers[i], "file.txt");
+
+            if(status == ASYNC_COMPLETE || status == ASYNC_ERROR) {
+                // Remove completed reader
+                readers[i] = readers[--active_count];
+                i--;
+            }
+        }
+
+        usleep(1000);  // Sleep briefly to avoid busy-waiting
+    }
+}
+\end{lstlisting}
+
+\vspace{0.5cm}
+\subsection{Limitations and Considerations}
+
+\noindent\rule{\textwidth}{0.4pt}
+\vspace{0.2cm}
+
+While coroutines are powerful, they come with significant constraints, especially in C's stackless implementations. Understanding these limitations is crucial for deciding when and how to use them.
+
+\vspace{0.3cm}
+\noindent\textbf{\large Stackless Limitations}
+
+\vspace{0.2cm}
+\noindent The techniques we've explored are ``stackless'' coroutines---they don't manipulate the actual call stack. This simplicity comes at a cost:
+
+\begin{description}[style=nextline,leftmargin=0pt]
+    \item[\textbf{Cannot preserve local variables automatically}] Every piece of state must be explicitly stored in static variables or a context structure. This is tedious and error-prone. You can't just declare a local variable and expect it to survive across yields. This is the biggest practical limitation and makes stackless coroutines feel unnatural compared to languages with native support.
+
+    \item[\textbf{Cannot yield from nested function calls}] If your coroutine calls another function, that function cannot yield. Only the top-level coroutine function can yield. This forces you to flatten your code or pass the coroutine context to helper functions so they can modify state without yielding. It prevents the natural decomposition of complex coroutines into smaller helper functions.
+
+    \item[\textbf{All state must be explicit}] There's no hidden magic. Every variable, every counter, every buffer must be declared in your context structure or as a static variable. This makes the state machine visible, which aids debugging, but adds significant boilerplate. You must carefully consider what state needs to persist across yields.
+
+    \item[\textbf{Switch-based approach limits where yields can occur}] The switch statement mechanism requires yield points to be in specific places. You cannot yield inside a function call or from within certain expressions. This sometimes forces awkward code restructuring. Additionally, the technique relies on undefined behavior in some interpretations of the C standard (though it works on all practical compilers).
+\end{description}
+
+\vspace{0.4cm}
+\noindent\textbf{\large Best Practices}
+
+\begin{warningbox}
+\textbf{Critical Guidelines:} Following these practices will save you from subtle bugs, memory leaks, and maintenance nightmares. Coroutines require discipline---cut corners at your peril.
+\end{warningbox}
+
+\vspace{0.2cm}
+
+\begin{description}[style=nextline,leftmargin=0pt]
+    \item[\textbf{Use for I/O-bound operations, not CPU-bound}] Coroutines shine when waiting for external events---network data, user input, file I/O. They're less useful for pure computation. If your task is CPU-intensive, coroutine overhead provides little benefit over straight-line code. The value is in managing many concurrent I/O operations efficiently.
+
+    \item[\textbf{Keep coroutine state structures small}] Large state structures mean more memory per coroutine instance, limiting how many you can have. This matters when handling thousands of concurrent operations. Consider whether all fields are truly needed or if some can be computed on-demand.
+
+    \item[\textbf{Document yield points clearly}] Comment each yield point explaining why you're yielding and what you expect when resumed. This helps future maintainers understand the control flow. The non-linear execution is coroutines' greatest strength and their greatest source of confusion.
+
+    \item[\textbf{Consider thread safety}] If multiple threads might call the same coroutine, you need synchronization. Static variables in Simon Tatham's approach are particularly problematic here---they're implicitly shared. Context structure approaches are safer because each thread can have its own contexts, but you still need care if contexts are shared.
+
+    \item[\textbf{Free allocated resources in cleanup states}] Memory leaks are easy in coroutines because resources acquired in one state might need cleanup in another. Always include explicit cleanup states, and consider what happens if a coroutine is abandoned mid-execution. In some cases, you might need a separate ``abort'' function that cleans up regardless of current state.
+
+    \item[\textbf{Test state machine transitions thoroughly}] Every state, every transition, every error path needs testing. State machines have many more execution paths than linear code. Use unit tests that exercise all states, and consider property-based testing or state space exploration tools for critical coroutines.
+\end{description}
+
+\vspace{0.4cm}
+\noindent\textbf{\large When to Use Coroutines}
+
+\vspace{0.2cm}
+\noindent Coroutines are the right tool for specific scenarios:
+
+\begin{description}[style=nextline,leftmargin=0pt]
+    \item[\textbf{Parsing complex protocols incrementally}] When you must process data as it arrives, byte by byte or packet by packet, coroutines let you write the parser as linear code rather than a tangled web of callbacks. This is perhaps their single best use case.
+
+    \item[\textbf{Implementing generators and iterators}] Any time you need to produce a sequence of values without generating them all upfront, generators (coroutines that yield values) are ideal. This includes tree traversals, combinatorial generation, infinite sequences, and lazy evaluation.
+
+    \item[\textbf{State machines that span multiple function calls}] If your state machine naturally wants to remember where it is across multiple invocations, coroutines are cleaner than manual state tracking. The execution point itself becomes your state.
+
+    \item[\textbf{Cooperative task scheduling}] When you have many tasks that can make incremental progress, coroutines provide lightweight task switching. This is the foundation of many async I/O frameworks and game engines' task systems.
+
+    \item[\textbf{Avoiding callback pyramids in async code}] When traditional callback-based async programming leads to deeply nested, hard-to-follow code, coroutines flatten the control flow. The async/await pattern in modern languages is essentially coroutines with syntactic sugar.
+\end{description}
+
+\vspace{0.4cm}
+\noindent\textbf{\large Alternatives to Consider}
+
+\begin{notebox}
+\textbf{Choose Wisely:} Coroutines aren't always the answer. Each alternative has its place. Match the tool to the problem.
+\end{notebox}
+
+\vspace{0.2cm}
+
+\begin{description}[style=nextline,leftmargin=0pt]
+    \item[\textbf{Threads}] For true parallelism across CPU cores, threads are necessary. They have higher overhead (each thread needs a stack, context switching is expensive) but actually run simultaneously. Use threads for CPU-bound parallel work, coroutines for I/O-bound concurrent work.
+
+    \item[\textbf{Callbacks}] Sometimes callbacks are simpler. For straightforward event handling with minimal state, callbacks work fine. They become problematic only when you have complex sequences of async operations. Don't reach for coroutines if a few simple callbacks suffice.
+
+    \item[\textbf{ucontext}] POSIX provides \texttt{getcontext}, \texttt{setcontext}, \texttt{makecontext}, and \texttt{swapcontext} for stack-based context switching. These enable true stack-preserving coroutines where local variables work normally. However, this API is deprecated, non-portable (doesn't work on Windows), and tricky to use correctly. It's more powerful than stackless coroutines but fragile.
+
+    \item[\textbf{Assembly}] You can implement coroutines in assembly by manually saving and restoring registers and manipulating stack pointers. This gives maximum control and efficiency but is architecture-specific, hard to maintain, and easy to get wrong. Only consider this for performance-critical systems code where you've exhausted all other options.
+
+    \item[\textbf{Libraries}] Several C libraries implement coroutines: libaco (fast asymmetric coroutines), libcoro (symmetric coroutines), libtask (Plan 9-style task library), and others. These provide more features and better ergonomics than rolling your own. The cost is an external dependency and learning a library-specific API. For production use, libraries are often the right choice.
+\end{description>
+
+\vspace{0.4cm}
+\begin{tipbox}
+\textbf{Final Wisdom:} Coroutines in C require discipline but provide powerful abstraction for complex control flow without the overhead of operating system threads. They represent a middle ground between callbacks (simple but limiting) and threads (powerful but expensive). When you understand their constraints and use them appropriately, they can dramatically simplify systems that manage multiple concurrent operations. The key is recognizing when the benefits of sequential-looking code outweigh the costs of explicit state management.
+\end{tipbox}
+
+\vspace{0.5cm}
+\noindent\rule{\textwidth}{0.4pt}
 
 \section{Intrusive Data Structures}
 
