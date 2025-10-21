@@ -453,7 +453,7 @@ The socket API on Unix (BSD sockets) and Windows (Winsock) look similar but have
 
 The good news? With proper abstractions, you can write networking code once and have it work everywhere. Let's build those abstractions.
 
-Windows doesn't use BSD sockets directly—it uses Winsock, which is \textit{inspired by} BSD sockets but has critical differences:
+Windows doesn't use BSD sockets directly---it uses Winsock, which is \textit{inspired by} BSD sockets but has critical differences:
 
 
 \subsection{The Problem in Detail}
@@ -1366,7 +1366,7 @@ static inline int process_kill(process_t proc) {
 \end{lstlisting}
 
 \begin{warningbox}
-\textbf{fork() doesn't exist on Windows!} You must use CreateProcess or \_spawn functions. This is one of the biggest portability challenges—Unix code using fork() needs complete rewriting for Windows.
+\textbf{fork() doesn't exist on Windows!} You must use CreateProcess or \_spawn functions. This is one of the biggest portability challenges---Unix code using fork() needs complete rewriting for Windows.
 \end{warningbox}
 
 \section{Line Endings: CRLF vs LF}
@@ -2250,7 +2250,7 @@ Deep directory nesting in tests worked everywhere until a Windows user hit the 2
 
 \subsection{Final Wisdom}
 
-Platform-specific code isn't a failure—it's a reality. The goal isn't to avoid it entirely, but to:
+Platform-specific code isn't a failure---it's a reality. The goal isn't to avoid it entirely, but to:
 
 \begin{enumerate}
     \item \textbf{Isolate it}: Keep platform code in clearly marked sections

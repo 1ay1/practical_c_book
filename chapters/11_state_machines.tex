@@ -2,7 +2,7 @@
 
 \section{Why State Machines?}
 
-State machines are one of the most practical patterns in C. They help manage complex behavior by breaking it down into discrete states and transitions. Think of a vending machine, network connection, or game character—all are state machines.
+State machines are one of the most practical patterns in C. They help manage complex behavior by breaking it down into discrete states and transitions. Think of a vending machine, network connection, or game character---all are state machines.
 
 A \textbf{state machine} (also called a finite state machine or FSM) is a mathematical model of computation that can be in exactly one state at any given time. The machine changes from one state to another in response to external inputs called \textbf{events} or \textbf{transitions}.
 
@@ -57,7 +57,7 @@ void handle_input(char c) {
 
 \section{Enum-Based State Machines}
 
-The simplest and most common pattern—using enums to represent states and a simple variable to track the current state.
+The simplest and most common pattern---using enums to represent states and a simple variable to track the current state.
 
 This is the most straightforward implementation and should be your default choice for simple state machines. The state is just an enum value, and state transitions are simple assignments. This approach is fast, type-safe, and easy to understand.
 
@@ -190,7 +190,7 @@ void parser_process_char(Parser* p, char c) {
 
 \section{Function Pointer State Machine}
 
-More flexible—each state is a function rather than a case in a switch statement.
+More flexible---each state is a function rather than a case in a switch statement.
 
 This pattern provides several advantages over switch-based machines:
 
@@ -268,7 +268,7 @@ Function pointer state machines are more flexible than switch-based ones. They a
 
 \section{Hierarchical State Machines}
 
-States within states for complex behavior—also known as \textbf{nested states} or \textbf{substates}.
+States within states for complex behavior---also known as \textbf{nested states} or \textbf{substates}.
 
 In real systems, states often have substates. For example, a character might be "alive" with substates "idle", "moving", or "attacking". When the character dies, all these substates become irrelevant.
 
@@ -317,7 +317,7 @@ void character_take_damage(Character* c, int damage) {
 
 \section{State Machine with Entry/Exit Actions}
 
-Execute code when entering or leaving states—a critical pattern for resource management and initialization.
+Execute code when entering or leaving states---a critical pattern for resource management and initialization.
 
 Many state machines need to perform actions when transitioning between states:
 \begin{itemize}
@@ -403,7 +403,7 @@ void motor_change_state(Motor* m, MotorState new_state) {
 
 \section{Table-Driven State Machine}
 
-Use a table for complex state transitions—separating the transition logic from the implementation.
+Use a table for complex state transitions---separating the transition logic from the implementation.
 
 Table-driven state machines represent transitions as data rather than code. This is powerful because:
 
@@ -481,7 +481,7 @@ Table-driven state machines separate data from code. You can load transitions fr
 
 \section{Timeout and Timed States}
 
-States that automatically transition after a timeout—essential for real-time and reactive systems.
+States that automatically transition after a timeout---essential for real-time and reactive systems.
 
 Many systems need states that expire or time out:
 \begin{itemize}
@@ -533,7 +533,7 @@ void sm_update(TimedStateMachine* sm) {
 
 \section{State History}
 
-Remember previous states for "back" functionality—implementing undo/redo or navigation history.
+Remember previous states for "back" functionality---implementing undo/redo or navigation history.
 
 State history is crucial for:
 \begin{itemize}
@@ -586,7 +586,7 @@ Two fundamental types of state machines, differing in how they produce output.
 
 \textbf{Mealy Machine}: Output depends on both the current state and the input event. This can make Mealy machines more compact (fewer states), but also more complex to understand.
 
-In practice, most real-world state machines are hybrids—some outputs depend only on state, others on state and input. Choose the style that makes your code clearest.
+In practice, most real-world state machines are hybrids---some outputs depend only on state, others on state and input. Choose the style that makes your code clearest.
 
 \subsection{Moore Machine (Output depends on state)}
 
@@ -656,7 +656,7 @@ TCP (Transmission Control Protocol) is one of the most famous real-world state m
 
 The TCP connection lifecycle involves 11 states. Each state represents a specific phase of connection establishment, data transfer, or connection termination. The beauty of the state machine model is that it precisely defines what to do with each packet type in each state.
 
-For example, receiving a SYN (synchronize) packet in the CLOSED state means someone wants to connect, so you send SYN+ACK and move to SYN\_RECEIVED. But receiving SYN in the ESTABLISHED state is an error—connections are already established.
+For example, receiving a SYN (synchronize) packet in the CLOSED state means someone wants to connect, so you send SYN+ACK and move to SYN\_RECEIVED. But receiving SYN in the ESTABLISHED state is an error---connections are already established.
 
 This example shows how state machines are essential for implementing network protocols correctly. Without a clear state machine, protocol implementations become bug-ridden tangles of conditionals.
 
@@ -771,9 +771,9 @@ int is_valid_transition(State from, State to) {
 
 \section{Concurrent State Machines}
 
-Multiple state machines running in parallel—modeling objects with independent behaviors.
+Multiple state machines running in parallel---modeling objects with independent behaviors.
 
-Complex systems often have multiple orthogonal (independent) aspects of state. A game character can be walking AND attacking simultaneously—movement and combat are independent state machines.
+Complex systems often have multiple orthogonal (independent) aspects of state. A game character can be walking AND attacking simultaneously---movement and combat are independent state machines.
 
 \textbf{Orthogonal states} mean that changes in one state machine don't affect the other. The character's movement state (idle, walking, running, jumping) is independent of their combat state (idle, attacking, blocking, stunned).
 
@@ -851,13 +851,13 @@ void update_animation_sm(Character* c) {
 
 \section{Pushdown Automaton}
 
-State machines with a stack for nested states—a more powerful computational model.
+State machines with a stack for nested states---a more powerful computational model.
 
 A \textbf{pushdown automaton} (PDA) is a state machine augmented with a stack. This allows it to remember an arbitrary amount of information, making it more powerful than a finite state machine.
 
 PDAs are perfect for:
 \begin{itemize}
-    \item Menu systems (main → options → graphics → advanced, then back out)
+    \item Menu systems (main -> options -> graphics -> advanced, then back out)
     \item Expression parsing (matching parentheses)
     \item Function call stacks
     \item Undo/redo that preserves full state
@@ -866,7 +866,7 @@ PDAs are perfect for:
 
 The stack remembers "where you came from," allowing you to return to previous contexts. This is more powerful than simple history because each state can be entered from multiple previous states.
 
-Think of it like a web browser's back button—it remembers the full navigation path, not just the previous page.
+Think of it like a web browser's back button---it remembers the full navigation path, not just the previous page.
 
 \begin{lstlisting}
 #define STATE_STACK_SIZE 16
@@ -938,7 +938,7 @@ MenuState menu_current(MenuSystem* menu) {
 
 \section{Event Queue State Machine}
 
-Process events from a queue for better control—decoupling event generation from event processing.
+Process events from a queue for better control---decoupling event generation from event processing.
 
 \textbf{Why use an event queue?}
 
@@ -1036,7 +1036,7 @@ void sm_process_events(QueuedStateMachine* sm) {
 
 \section{Guard Conditions}
 
-Add conditions to state transitions—making transitions conditional on runtime state.
+Add conditions to state transitions---making transitions conditional on runtime state.
 
 Sometimes a transition should only occur if certain conditions are met. For example:
 \begin{itemize}
@@ -1047,7 +1047,7 @@ Sometimes a transition should only occur if certain conditions are met. For exam
 
 \textbf{Guard conditions} are boolean functions evaluated before a transition. If the guard returns false, the transition is blocked, and the state machine remains in its current state.
 
-This keeps your state machine declarative—the transition table says "when X happens IF condition Y, go to state Z." Without guards, you'd need separate states for every combination of conditions, leading to state explosion.
+This keeps your state machine declarative---the transition table says "when X happens IF condition Y, go to state Z." Without guards, you'd need separate states for every combination of conditions, leading to state explosion.
 
 Guards vs. events: Events are external stimuli. Guards are internal conditions. Both are needed for flexible, real-world state machines.
 
@@ -1104,7 +1104,7 @@ int sm_handle_guarded_event(StateMachine* sm, int event, void* context) {
 
 \section{State Machine Code Generation}
 
-Generate state machine code from a table—reducing boilerplate and ensuring consistency.
+Generate state machine code from a table---reducing boilerplate and ensuring consistency.
 
 Writing state machine code by hand is tedious and error-prone. You need:
 \begin{itemize}
@@ -1190,22 +1190,22 @@ void sm_transition(StateMachine* sm, State new_state, void* ctx) {
 
 \section{Real-World Example: Protocol Parser}
 
-HTTP request parser as a state machine—a practical example of character-by-character parsing.
+HTTP request parser as a state machine---a practical example of character-by-character parsing.
 
 Parsing text-based protocols like HTTP is a perfect application for state machines. Each character advances the machine through states representing different parts of the request:
 
 \begin{enumerate}
-    \item START → METHOD (reading "GET", "POST", etc.)
-    \item METHOD → URI (reading "/path/to/resource")
-    \item URI → VERSION (reading "HTTP/1.1")
-    \item VERSION → HEADER\_NAME (reading "Content-Type")
-    \item HEADER\_NAME → HEADER\_VALUE (reading "application/json")
+    \item START -> METHOD (reading "GET", "POST", etc.)
+    \item METHOD -> URI (reading "/path/to/resource")
+    \item URI -> VERSION (reading "HTTP/1.1")
+    \item VERSION -> HEADER\_NAME (reading "Content-Type")
+    \item HEADER\_NAME -> HEADER\_VALUE (reading "application/json")
     \item Repeat headers until blank line
-    \item HEADER\_NAME → BODY (blank line signals end of headers)
-    \item BODY → DONE (message complete)
+    \item HEADER\_NAME -> BODY (blank line signals end of headers)
+    \item BODY -> DONE (message complete)
 \end{enumerate}
 
-This approach is extremely efficient—each character is examined once, no backtracking, no complex string operations. The state machine enforces the protocol grammar, automatically rejecting malformed requests.
+This approach is extremely efficient---each character is examined once, no backtracking, no complex string operations. The state machine enforces the protocol grammar, automatically rejecting malformed requests.
 
 Many high-performance servers (nginx, nodejs http-parser) use state machine parsers for this reason.
 
@@ -1370,7 +1370,7 @@ printf("URI: %s\n", parser.uri);
 
 \section{Real-World Example: Game AI}
 
-Enemy AI with behavior states—implementing intelligent NPC behavior.
+Enemy AI with behavior states---implementing intelligent NPC behavior.
 
 Game AI is often implemented as state machines where each state represents a different behavior:
 
@@ -1385,12 +1385,12 @@ Game AI is often implemented as state machines where each state represents a dif
 
 The beauty is in the transitions. The AI feels intelligent because it reacts appropriately to stimuli:
 \begin{itemize}
-    \item Spots player while patrolling → investigate
-    \item Gets close while investigating → chase
-    \item Gets very close while chasing → attack
-    \item Health drops too low → flee
-    \item Loses sight of player → search
-    \item Can't find player after searching → give up, resume patrol
+    \item Spots player while patrolling -> investigate
+    \item Gets close while investigating -> chase
+    \item Gets very close while chasing -> attack
+    \item Health drops too low -> flee
+    \item Loses sight of player -> search
+    \item Can't find player after searching -> give up, resume patrol
 \end{itemize}
 
 This creates believable, fun-to-fight enemies without complex algorithms. Add some randomness to transitions, and each encounter feels different.
@@ -1532,7 +1532,7 @@ void ai_update(EnemyAI* ai, Player* player, float dt) {
 
 \section{State Machine Testing}
 
-Testing state machines systematically—ensuring all transitions work correctly.
+Testing state machines systematically---ensuring all transitions work correctly.
 
 State machines are highly testable because their behavior is deterministic: given a starting state and a sequence of events, the final state is predictable.
 
@@ -1616,7 +1616,7 @@ void run_all_tests(void) {
 
 \section{State Machine Visualization}
 
-Generate GraphViz diagrams—making state machines visible and understandable.
+Generate GraphViz diagrams---making state machines visible and understandable.
 
 A picture is worth a thousand lines of code. State diagrams show:
 \begin{itemize}
@@ -1626,7 +1626,7 @@ A picture is worth a thousand lines of code. State diagrams show:
     \item Overall structure at a glance
 \end{itemize}
 
-GraphViz is perfect for this—it automatically layouts the diagram so you don't have to position nodes manually. The DOT language is simple: define nodes, define edges with labels, done.
+GraphViz is perfect for this---it automatically layouts the diagram so you don't have to position nodes manually. The DOT language is simple: define nodes, define edges with labels, done.
 
 \textbf{Use cases}:
 \begin{itemize}
@@ -1672,7 +1672,7 @@ void sm_generate_dot(FILE* f) {
 
 \section{Performance Considerations}
 
-Optimizing state machines for high-performance applications—when millions of transitions per second matter.
+Optimizing state machines for high-performance applications---when millions of transitions per second matter.
 
 Most state machines are fast enough without optimization. But in hot paths (game loops, packet processing, real-time systems), performance matters.
 
@@ -1685,9 +1685,9 @@ Most state machines are fast enough without optimization. But in hot paths (game
     \item \textbf{Avoid function pointers}: Direct calls are faster than indirect
 \end{itemize}
 
-The table-based approach shown here trades memory for speed. If you have 32 states and 32 events, you need a 32×32 table (1KB). But each lookup is just two array accesses—no searching, no function calls.
+The table-based approach shown here trades memory for speed. If you have 32 states and 32 events, you need a 32\times32 table (1KB). But each lookup is just two array accesses---no searching, no function calls.
 
-\textbf{Measurement matters}: Profile before optimizing. Most state machines aren't bottlenecks. But when they are, these techniques can speed them up 10-100×.
+\textbf{Measurement matters}: Profile before optimizing. Most state machines aren't bottlenecks. But when they are, these techniques can speed them up 10-100\times.
 
 \begin{lstlisting}
 // Optimize state transitions with perfect hashing
@@ -1741,7 +1741,7 @@ typedef struct {
 State machines in C:
 
 \begin{itemize}
-    \item Use enums for states—clear and type-safe
+    \item Use enums for states---clear and type-safe
     \item Switch-based for simple state machines
     \item Function pointers for flexible behavior
     \item Tables for complex transition logic

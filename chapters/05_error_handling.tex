@@ -2,7 +2,7 @@
 
 \section{The Challenge of Error Handling in C}
 
-Unlike languages with exceptions, C requires explicit error handling. Every function that can fail must communicate that failure to its caller, and callers must check for errors. This is tedious but powerful—you always know exactly where errors can occur.
+Unlike languages with exceptions, C requires explicit error handling. Every function that can fail must communicate that failure to its caller, and callers must check for errors. This is tedious but powerful---you always know exactly where errors can occur.
 
 But here's what 20 years of C programming teaches you: error handling is where most bugs hide. Not in algorithms, not in data structures, but in the unglamorous code that handles failures. Production systems fail not because of clever code, but because someone forgot to check a return value. (Usually at 3 AM on a Friday. Always on a Friday.)
 

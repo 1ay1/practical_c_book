@@ -2,7 +2,7 @@
 
 \section{Beyond Basic Linked Lists}
 
-Most textbooks stop at singly-linked lists with toy examples. Real code uses doubly-linked lists, circular lists, skip lists, and sophisticated pointer manipulation. This chapter covers the linked structures you'll actually encounter in production systems—from the Linux kernel's intrusive lists to Redis's skip lists.
+Most textbooks stop at singly-linked lists with toy examples. Real code uses doubly-linked lists, circular lists, skip lists, and sophisticated pointer manipulation. This chapter covers the linked structures you'll actually encounter in production systems---from the Linux kernel's intrusive lists to Redis's skip lists.
 
 \textbf{The linked structure family tree}:
 
@@ -20,9 +20,9 @@ Linked structures are all about managing relationships between data through poin
 \textbf{Trade-offs}:
 
 \begin{itemize}
-    \item Poor cache locality—each node is a separate allocation
-    \item Memory overhead—pointers take space
-    \item No random access—must traverse from head
+    \item Poor cache locality---each node is a separate allocation
+    \item Memory overhead---pointers take space
+    \item No random access---must traverse from head
     \item More complex memory management
 \end{itemize}
 
@@ -223,7 +223,7 @@ Always maintain a tail pointer for O(1) append operations. Without it, appending
 
 \section{Doubly-Linked Lists}
 
-Bidirectional traversal and O(1) deletion at any node—the workhorse of many systems.
+Bidirectional traversal and O(1) deletion at any node---the workhorse of many systems.
 
 \textbf{Why doubly-linked lists dominate in practice}:
 
@@ -233,14 +233,14 @@ The extra pointer costs memory (8 bytes per node on 64-bit systems), but the alg
 
 \subsection{Linux Kernel Style Doubly-Linked List}
 
-The Linux kernel uses an elegant intrusive list pattern—arguably the most clever linked list design ever created. Instead of the list containing pointers to your data, your data structures embed the list nodes directly. This inverts the normal relationship and provides massive benefits.
+The Linux kernel uses an elegant intrusive list pattern---arguably the most clever linked list design ever created. Instead of the list containing pointers to your data, your data structures embed the list nodes directly. This inverts the normal relationship and provides massive benefits.
 
 \textbf{Why this pattern is revolutionary}:
 \begin{itemize}
-    \item No separate allocation for nodes—eliminates allocation overhead
+    \item No separate allocation for nodes---eliminates allocation overhead
     \item One struct can be in multiple lists simultaneously
-    \item Type-agnostic operations—same code works for all types
-    \item Cache-friendly—data and links stored together in memory
+    \item Type-agnostic operations---same code works for all types
+    \item Cache-friendly---data and links stored together in memory
     \item Zero memory overhead beyond the link pointers themselves
 \end{itemize}
 
@@ -372,20 +372,20 @@ list_for_each_safe(pos_safe, n, &task_list) {
 \textbf{Why this pattern is brilliant}:
 
 \begin{itemize}
-    \item No separate node allocation—nodes embedded in your structs
+    \item No separate node allocation---nodes embedded in your structs
     \item One struct can be in multiple lists (embed multiple list\_head members)
-    \item Type-agnostic list operations—same code works for all types
-    \item Cache-friendly—data and links stored together
+    \item Type-agnostic list operations---same code works for all types
+    \item Cache-friendly---data and links stored together
     \item O(1) deletion when you have the node pointer
 \end{itemize}
 
 \section{Circular Linked Lists}
 
-Lists where the last node points back to the first—useful for round-robin scheduling and ring buffers.
+Lists where the last node points back to the first---useful for round-robin scheduling and ring buffers.
 
 \textbf{What makes circular lists special}:
 
-In a circular list, there's no "end"—you can keep traversing forever. This property is perfect for modeling cyclic processes: round-robin schedulers, circular buffers, token passing protocols, and game turn systems.
+In a circular list, there's no "end"---you can keep traversing forever. This property is perfect for modeling cyclic processes: round-robin schedulers, circular buffers, token passing protocols, and game turn systems.
 
 The key insight: you don't need separate head and tail pointers. Just maintain a "current" pointer and you can access the entire circle. To traverse the whole list, just stop when you return to your starting point.
 
@@ -507,7 +507,7 @@ int josephus(int n, int k) {
 
 \section{Skip Lists}
 
-Probabilistic data structure providing O(log n) search, insert, and delete—simpler than balanced trees.
+Probabilistic data structure providing O(log n) search, insert, and delete---simpler than balanced trees.
 
 \textbf{The genius of skip lists}:
 
@@ -704,10 +704,10 @@ Allocating one node at a time is slow. Memory pools batch allocations for massiv
 
 Every time you insert into a linked list, you call malloc(). Every deletion calls free(). For small objects like list nodes (16-32 bytes), this overhead dominates:
 \begin{itemize}
-    \item malloc() is slow—must find free block, update metadata, handle alignment
-    \item Memory fragmentation—lots of small allocations fragment the heap
-    \item Cache misses—malloc'd memory scattered across address space
-    \item Allocator contention—in multi-threaded code, malloc() uses locks
+    \item malloc() is slow---must find free block, update metadata, handle alignment
+    \item Memory fragmentation---lots of small allocations fragment the heap
+    \item Cache misses---malloc'd memory scattered across address space
+    \item Allocator contention---in multi-threaded code, malloc() uses locks
 \end{itemize}
 
 \textbf{Memory pool solution}:
@@ -865,7 +865,7 @@ void poollist_remove(PoolList* list, PoolNode* node) {
 
 \section{XOR Linked List}
 
-Space-efficient doubly-linked list using XOR trick—stores only one pointer per node instead of two.
+Space-efficient doubly-linked list using XOR trick---stores only one pointer per node instead of two.
 
 \textbf{The XOR linked list hack}:
 
@@ -1009,7 +1009,7 @@ void xorlist_traverse_backward(XORList* list,
     \item Pointer arithmetic with XOR is non-standard
     \item Not compatible with garbage collectors
     \item Negligible space savings on 64-bit systems (8 bytes per node vs. total memory)
-    \item Hard to debug—can't inspect pointers in debugger
+    \item Hard to debug---can't inspect pointers in debugger
     \item Breaks pointer provenance rules in modern C
     \item No real-world performance benefit (the extra pointer is usually cached)
 \end{itemize}
@@ -1018,11 +1018,11 @@ void xorlist_traverse_backward(XORList* list,
 
 \textbf{The cache reality}:
 
-Modern CPUs fetch entire cache lines (64 bytes). Your node with two pointers (16 bytes) fits in the same cache line as a node with one pointer (8 bytes). You're not saving cache bandwidth, just heap space. And heap space is cheap—developer time debugging pointer bugs is expensive.
+Modern CPUs fetch entire cache lines (64 bytes). Your node with two pointers (16 bytes) fits in the same cache line as a node with one pointer (8 bytes). You're not saving cache bandwidth, just heap space. And heap space is cheap---developer time debugging pointer bugs is expensive.
 
 \section{Self-Organizing Lists}
 
-Lists that reorganize based on access patterns—improve performance for non-uniform access.
+Lists that reorganize based on access patterns---improve performance for non-uniform access.
 
 \textbf{The 80/20 rule applied to data structures}:
 
@@ -1154,11 +1154,11 @@ void mtf_reorder_by_frequency(MoveToFrontList* list) {
 
 \section{Unrolled Linked List}
 
-Hybrid of array and linked list—multiple elements per node for better cache performance.
+Hybrid of array and linked list---multiple elements per node for better cache performance.
 
 \textbf{The best of both worlds}:
 
-Regular linked lists have terrible cache performance—each node is a separate allocation scattered across memory. Every traversal incurs a cache miss. Unrolled linked lists fix this by storing multiple elements per node.
+Regular linked lists have terrible cache performance---each node is a separate allocation scattered across memory. Every traversal incurs a cache miss. Unrolled linked lists fix this by storing multiple elements per node.
 
 Instead of:
 \begin{verbatim}
@@ -1185,7 +1185,7 @@ Unrolled lists are more complex than either arrays or linked lists. Insertion mi
 
 \textbf{Real-world usage}:
 
-Database B-tree implementations use this idea—each tree node contains multiple keys. This reduces tree height and improves cache performance. You're applying the same principle to linked lists.
+Database B-tree implementations use this idea---each tree node contains multiple keys. This reduces tree height and improves cache performance. You're applying the same principle to linked lists.
 
 \begin{lstlisting}
 #define UNROLL_SIZE 16
@@ -1280,11 +1280,11 @@ void unrolled_foreach(UnrolledList* list, void (*visit)(void*)) {
 
 \section{Lock-Free Linked Lists}
 
-Thread-safe linked structures without locks—using atomic operations.
+Thread-safe linked structures without locks---using atomic operations.
 
 \textbf{The lock-free promise}:
 
-Locks have problems: they block threads, can deadlock, suffer from contention, and kill performance under high concurrency. Lock-free data structures use atomic compare-and-swap operations instead—threads never block, guaranteed progress, no deadlocks.
+Locks have problems: they block threads, can deadlock, suffer from contention, and kill performance under high concurrency. Lock-free data structures use atomic compare-and-swap operations instead---threads never block, guaranteed progress, no deadlocks.
 
 \textbf{The core technique: Compare-And-Swap (CAS)}:
 
@@ -1312,7 +1312,7 @@ If the value at location hasn't changed since we read it (still equals old\_valu
 
 \textbf{Why this is tricky}:
 
-The real challenge isn't insertion—it's memory reclamation. You can't just free() a node after removal because another thread might still be accessing it! Solutions include hazard pointers, epoch-based reclamation, or reference counting. All are complex.
+The real challenge isn't insertion---it's memory reclamation. You can't just free() a node after removal because another thread might still be accessing it! Solutions include hazard pointers, epoch-based reclamation, or reference counting. All are complex.
 
 \begin{lstlisting}
 #include <stdatomic.h>
@@ -1375,7 +1375,7 @@ void* lockfree_pop(LockFreeList* list) {
 }
 \end{lstlisting}
 
-\textbf{Challenge}: Memory reclamation is hard in lock-free structures. You can't just free a node—another thread might still be accessing it. Solutions include:
+\textbf{Challenge}: Memory reclamation is hard in lock-free structures. You can't just free a node---another thread might still be accessing it. Solutions include:
 
 \begin{itemize}
     \item \textbf{Hazard pointers}: Threads announce which pointers they're using
@@ -1400,7 +1400,7 @@ Lock-free programming is extremely difficult to get right. Use it only when:
     \item You're willing to debug race conditions
 \end{itemize}
 
-For most applications, a simple mutex is faster, simpler, and correct. Lock-free is not inherently faster—it's about avoiding blocking, not raw speed.
+For most applications, a simple mutex is faster, simpler, and correct. Lock-free is not inherently faster---it's about avoiding blocking, not raw speed.
 
 \section{Common Linked List Algorithms}
 
@@ -1469,7 +1469,7 @@ Node* merge_sorted(Node* l1, Node* l2,
 
 \subsection{Merge Sort for Linked Lists}
 
-Merge sort is the best sorting algorithm for linked lists. Unlike quicksort (which needs random access) or heapsort (which needs arrays), merge sort only needs sequential access—perfect for linked lists.
+Merge sort is the best sorting algorithm for linked lists. Unlike quicksort (which needs random access) or heapsort (which needs arrays), merge sort only needs sequential access---perfect for linked lists.
 
 \textbf{Why merge sort for linked lists?}
 \begin{itemize}
@@ -1573,7 +1573,7 @@ Linked structures are fundamental to systems programming. Understanding them dee
 \begin{itemize}
     \item Always maintain tail pointers for O(1) append
     \item Use sentinel nodes to simplify edge cases
-    \item Master pointer manipulation—draw pictures!
+    \item Master pointer manipulation---draw pictures!
     \item Use memory pools for high-performance code
     \item Know common algorithms (reverse, merge, detect cycle)
 \end{itemize}

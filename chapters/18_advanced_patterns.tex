@@ -673,7 +673,7 @@ While coroutines are powerful, they come with significant constraints, especiall
     \item[\textbf{Assembly}] You can implement coroutines in assembly by manually saving and restoring registers and manipulating stack pointers. This gives maximum control and efficiency but is architecture-specific, hard to maintain, and easy to get wrong. Only consider this for performance-critical systems code where you've exhausted all other options.
 
     \item[\textbf{Libraries}] Several C libraries implement coroutines: libaco (fast asymmetric coroutines), libcoro (symmetric coroutines), libtask (Plan 9-style task library), and others. These provide more features and better ergonomics than rolling your own. The cost is an external dependency and learning a library-specific API. For production use, libraries are often the right choice.
-\end{description>
+\end{description}
 
 \vspace{0.4cm}
 \begin{tipbox}

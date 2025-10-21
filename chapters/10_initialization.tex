@@ -2,7 +2,7 @@
 
 \section{Understanding Initialization}
 
-Initialization is more than just assigning values—it's about setting up data structures in a predictable, safe state. C offers several initialization techniques, each with its own strengths and use cases.
+Initialization is more than just assigning values---it's about setting up data structures in a predictable, safe state. C offers several initialization techniques, each with its own strengths and use cases.
 
 \begin{lstlisting}
 // Different initialization styles
@@ -22,7 +22,7 @@ Uninitialized variables contain garbage values. Always initialize your variables
 
 \section{Zero Initialization}
 
-The safest default—initialize everything to zero.
+The safest default---initialize everything to zero.
 
 \begin{lstlisting}
 // Zero-initialize everything
@@ -57,7 +57,7 @@ Use \texttt{= \{0\}} to zero-initialize any struct or array. It's simple, portab
 
 \section{Designated Initializers (C99)}
 
-Initialize specific members by name—much clearer than positional initialization.
+Initialize specific members by name---much clearer than positional initialization.
 
 \subsection{Struct Designated Initializers}
 
@@ -271,7 +271,7 @@ log_array((int[]){1, 2, 3, 4, 5}, 5);
 
 \section{Static Initialization}
 
-Initialize data at compile time—faster and safer.
+Initialize data at compile time---faster and safer.
 
 \subsection{Static vs Dynamic Initialization}
 
@@ -789,7 +789,7 @@ void example(void) {
 Initialization patterns in C:
 
 \begin{itemize}
-    \item Always initialize variables—uninitialized data is undefined behavior
+    \item Always initialize variables---uninitialized data is undefined behavior
     \item Use \texttt{= \{0\}} for zero-initialization of any type
     \item Designated initializers (C99) make code clearer and more maintainable
     \item Compound literals create temporary objects inline

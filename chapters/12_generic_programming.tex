@@ -18,7 +18,7 @@ The answer: C provides several mechanisms for generic programming, each with tra
 
 \section{Void Pointer Basics}
 
-The foundation of generic programming in C—\texttt{void*} is a pointer to "unknown type" that can point to anything.
+The foundation of generic programming in C---\texttt{void*} is a pointer to "unknown type" that can point to anything.
 
 \textbf{Key properties}:
 \begin{itemize}
@@ -51,7 +51,7 @@ print_bytes(str, sizeof(str));
 \end{lstlisting}
 
 \begin{warningbox}
-Never dereference \texttt{void*} directly! Always cast to the correct type first. The compiler cannot help you if you cast incorrectly—this is where bugs hide.
+Never dereference \texttt{void*} directly! Always cast to the correct type first. The compiler cannot help you if you cast incorrectly---this is where bugs hide.
 \end{warningbox}
 
 \subsection{Generic Swap Function}
@@ -90,7 +90,7 @@ swap(&p1, &p2, sizeof(struct Point));
 
 \section{Generic Comparison Functions}
 
-The standard library's \texttt{qsort} and \texttt{bsearch} use function pointers for generic comparison—a pattern you'll use constantly.
+The standard library's \texttt{qsort} and \texttt{bsearch} use function pointers for generic comparison---a pattern you'll use constantly.
 
 \begin{lstlisting}
 // Standard comparator signature
@@ -266,7 +266,7 @@ vector_destroy(point_vec);
 
 \section{Generic Linked List}
 
-A linked list that can store any type—used everywhere in systems programming.
+A linked list that can store any type---used everywhere in systems programming.
 
 \begin{lstlisting}
 typedef struct Node {
@@ -445,7 +445,7 @@ list_destroy(int_list);
 
 \section{Generic Hash Table}
 
-The workhorse of generic programming—hash tables store key-value pairs of any type.
+The workhorse of generic programming---hash tables store key-value pairs of any type.
 
 \begin{lstlisting}
 #define HASH_TABLE_INITIAL_SIZE 16
@@ -670,7 +670,7 @@ ht_destroy(word_count);
 
 \section{Macro-Based Generic Programming}
 
-Macros can generate type-specific code at compile-time—zero runtime overhead, full type safety.
+Macros can generate type-specific code at compile-time---zero runtime overhead, full type safety.
 
 \subsection{Simple Generic Macros}
 
@@ -764,22 +764,22 @@ Point_vector_destroy(pv);
 
 \textbf{Advantages}:
 \begin{itemize}
-    \item Full type safety—compiler catches type errors
-    \item No void pointer overhead—direct memory access
-    \item Inlined functions—maximum performance
+    \item Full type safety---compiler catches type errors
+    \item No void pointer overhead---direct memory access
+    \item Inlined functions---maximum performance
     \item No heap allocation for elements (stored inline)
 \end{itemize}
 
 \textbf{Disadvantages}:
 \begin{itemize}
-    \item Code bloat—separate code for each type
-    \item Difficult debugging—macro expansion can be cryptic
-    \item Must include in header—increases compile time
+    \item Code bloat---separate code for each type
+    \item Difficult debugging---macro expansion can be cryptic
+    \item Must include in header---increases compile time
 \end{itemize}
 
 \section{C11 \_Generic Type Selection}
 
-C11 added \texttt{\_Generic} for compile-time type dispatch—the closest C gets to function overloading.
+C11 added \texttt{\_Generic} for compile-time type dispatch---the closest C gets to function overloading.
 
 \begin{lstlisting}
 // Generic print function
@@ -859,7 +859,7 @@ printf("List size: %zu\n", container_size(list));
 
 \section{Intrusive Data Structures}
 
-A powerful pattern used in Linux kernel and many high-performance systems—embed list/tree nodes inside your structs instead of storing pointers.
+A powerful pattern used in Linux kernel and many high-performance systems---embed list/tree nodes inside your structs instead of storing pointers.
 
 \begin{lstlisting}
 // Intrusive list node
@@ -913,7 +913,7 @@ while (curr != &person_list) {
 \textbf{Why intrusive structures?}
 \begin{itemize}
     \item No separate allocation for list nodes
-    \item Better cache locality—data and links together
+    \item Better cache locality---data and links together
     \item One object can be in multiple lists simultaneously
     \item Zero memory overhead beyond the links
 \end{itemize}
@@ -922,7 +922,7 @@ while (curr != &person_list) {
 
 \section{Function Pointer Tables for Polymorphism}
 
-Implement polymorphism using function pointer tables—the foundation of object-oriented C.
+Implement polymorphism using function pointer tables---the foundation of object-oriented C.
 
 \begin{lstlisting}
 // Interface (vtable)
@@ -1315,10 +1315,10 @@ Generic programming in C requires understanding multiple techniques:
 
 \textbf{Choose based on needs}:
 \begin{itemize}
-    \item Need runtime flexibility? → Void pointers
-    \item Need maximum performance? → Macros or intrusive structures
-    \item Need type safety? → Macros or \_Generic
-    \item Need polymorphism? → Function pointer tables
+    \item Need runtime flexibility? -> Void pointers
+    \item Need maximum performance? -> Macros or intrusive structures
+    \item Need type safety? -> Macros or \_Generic
+    \item Need polymorphism? -> Function pointer tables
 \end{itemize}
 
 Real C code uses all these techniques. Libraries like GLib, SQLite, and the Linux kernel demonstrate that C can handle complex generic programming when you master these patterns!

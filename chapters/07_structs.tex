@@ -2,15 +2,15 @@
 
 \section{The Power of Structs: Beyond Simple Grouping}
 
-Structs in C are deceptively simple—they just group data together, right? Wrong. In the hands of a professional, structs are the foundation of object-oriented patterns, memory optimization, API design, and high-performance code. This chapter covers the patterns that textbooks skip.
+Structs in C are deceptively simple---they just group data together, right? Wrong. In the hands of a professional, structs are the foundation of object-oriented patterns, memory optimization, API design, and high-performance code. This chapter covers the patterns that textbooks skip.
 
-Think of a struct like a custom container. Just as you can organize your desk drawer with dividers for pens, papers, and clips, structs let you organize data. But professional C programmers don't just use generic containers—they design custom containers optimized for exactly what they need. That's what this chapter teaches.
+Think of a struct like a custom container. Just as you can organize your desk drawer with dividers for pens, papers, and clips, structs let you organize data. But professional C programmers don't just use generic containers---they design custom containers optimized for exactly what they need. That's what this chapter teaches.
 
 \section{Understanding Struct Layout: Memory Secrets}
 
 Structs aren't just fields in a row. The compiler adds invisible padding for CPU performance, and understanding this is crucial for memory-efficient code.
 
-Imagine packing a suitcase. If you have big items (shoes) and small items (socks), you don't just throw them in order. You pack big items first, then fill gaps with small items. Compilers do the same with struct members—they arrange them for CPU efficiency, adding "padding" (empty space) where needed.
+Imagine packing a suitcase. If you have big items (shoes) and small items (socks), you don't just throw them in order. You pack big items first, then fill gaps with small items. Compilers do the same with struct members---they arrange them for CPU efficiency, adding "padding" (empty space) where needed.
 
 \begin{lstlisting}
 #include <stdio.h>
@@ -47,7 +47,7 @@ int main(void) {
 
 CPUs are faster at reading/writing data when it's aligned to natural boundaries. An \texttt{int} (4 bytes) should start at addresses divisible by 4. A \texttt{double} (8 bytes) should start at addresses divisible by 8. Misaligned access is slower on some CPUs, and crashes on others (ARM, older architectures).
 
-The compiler adds padding to ensure each field is properly aligned. This wastes memory but gains speed—a trade-off you need to understand.
+The compiler adds padding to ensure each field is properly aligned. This wastes memory but gains speed---a trade-off you need to understand.
 
 \section{Struct Padding and Alignment: Optimization Gold}
 
@@ -84,7 +84,7 @@ typedef struct {
 \end{lstlisting}
 
 \begin{tipbox}
-Always order struct members from largest to smallest. Put 8-byte types first (double, int64\_t, pointers on 64-bit), then 4-byte (int, float), then 2-byte (short), then 1-byte (char, bool). This minimizes padding and can save massive amounts of memory in large-scale applications. (It's like Tetris—fit the pieces efficiently!)
+Always order struct members from largest to smallest. Put 8-byte types first (double, int64\_t, pointers on 64-bit), then 4-byte (int, float), then 2-byte (short), then 1-byte (char, bool). This minimizes padding and can save massive amounts of memory in large-scale applications. (It's like Tetris---fit the pieces efficiently!)
 \end{tipbox}
 
 \subsection{Checking Alignment Requirements}
@@ -147,7 +147,7 @@ typedef struct {
 \end{lstlisting}
 
 \begin{warningbox}
-Packed structs are slower to access because of misalignment. Use them only when you must match an external binary format. For normal code, let the compiler add padding—it knows better than you do.
+Packed structs are slower to access because of misalignment. Use them only when you must match an external binary format. For normal code, let the compiler add padding---it knows better than you do.
 \end{warningbox}
 
 \section{Flexible Array Members: Variable-Length Structs}
@@ -191,7 +191,7 @@ if (arr) {
 \end{lstlisting}
 
 \begin{notebox}
-Flexible array members must be the last member of the struct, and the struct must have at least one other member. This is a language rule—the compiler needs something before the array to establish the struct's base size.
+Flexible array members must be the last member of the struct, and the struct must have at least one other member. This is a language rule---the compiler needs something before the array to establish the struct's base size.
 \end{notebox}
 
 \subsection{Real-World Example: Dynamic String}
@@ -368,12 +368,12 @@ int main(void) {
 \end{lstlisting}
 
 \begin{notebox}
-This works because C guarantees the first member of a struct has the same address as the struct itself. This is how GTK, GObject, GStreamer, and many C libraries implement object-oriented patterns! It's not a hack—it's a fundamental C guarantee.
+This works because C guarantees the first member of a struct has the same address as the struct itself. This is how GTK, GObject, GStreamer, and many C libraries implement object-oriented patterns! It's not a hack---it's a fundamental C guarantee.
 \end{notebox}
 
 \subsection{Type Tags for Runtime Type Information}
 
-In real OOP, you'd use `instanceof`. In C, we use type tags—explicit type fields that tell us what we're actually holding.
+In real OOP, you'd use `instanceof`. In C, we use type tags---explicit type fields that tell us what we're actually holding.
 
 \begin{lstlisting}
 typedef enum {
@@ -464,7 +464,7 @@ if (d) {
 
 This is how C++ virtual functions work under the hood, and how you achieve true polymorphism in C.
 
-Think of a VTable like a phone directory. Instead of hardcoding which function to call, you look it up in the directory. Different objects have different directories, so calling "draw" on a Circle looks up Circle's draw function, while calling "draw" on a Rectangle looks up Rectangle's draw function. Same operation name, different implementations—that's polymorphism!
+Think of a VTable like a phone directory. Instead of hardcoding which function to call, you look it up in the directory. Different objects have different directories, so calling "draw" on a Circle looks up Circle's draw function, while calling "draw" on a Rectangle looks up Rectangle's draw function. Same operation name, different implementations---that's polymorphism!
 
 \begin{lstlisting}
 // Forward declarations
@@ -643,7 +643,7 @@ The VTable must be the first member for safe casting between base and derived ty
 
 When you have many boolean flags or small integers (0-7, 0-15, etc.), bit fields let you pack them into minimal space. This is crucial for embedded systems, network protocols, and memory-constrained code.
 
-Think of bit fields like a pillbox with compartments. Instead of using a whole jar for each pill, you have one box with tiny compartments. Each compartment holds exactly what you need—no wasted space.
+Think of bit fields like a pillbox with compartments. Instead of using a whole jar for each pill, you have one box with tiny compartments. Each compartment holds exactly what you need---no wasted space.
 
 \begin{lstlisting}
 // Without bit fields - wastes 96% of memory!
@@ -793,7 +793,7 @@ Config configs[] = {
 \end{lstlisting}
 
 \begin{tipbox}
-Always use designated initializers for structs with more than 3 fields. Your code becomes self-documenting and immune to field reordering. This is standard practice in the Linux kernel, BSD, and professional C codebases. (And it makes code review much easier—reviewers can see what each value means without looking up the struct definition.)
+Always use designated initializers for structs with more than 3 fields. Your code becomes self-documenting and immune to field reordering. This is standard practice in the Linux kernel, BSD, and professional C codebases. (And it makes code review much easier---reviewers can see what each value means without looking up the struct definition.)
 \end{tipbox}
 
 \subsection{Compound Literals: Temporary Structs}
@@ -1044,7 +1044,7 @@ free(r3.data);
 \end{lstlisting}
 
 \begin{warningbox}
-Assignment (\texttt{=}) only does shallow copy! If your struct contains pointers, you MUST write a custom copy function. This is a major source of bugs—two structs sharing the same pointer, leading to double-frees or use-after-free errors. (It's like copying a house address vs copying the actual house—one's just a reference, the other is a full duplicate.)
+Assignment (\texttt{=}) only does shallow copy! If your struct contains pointers, you MUST write a custom copy function. This is a major source of bugs---two structs sharing the same pointer, leading to double-frees or use-after-free errors. (It's like copying a house address vs copying the actual house---one's just a reference, the other is a full duplicate.)
 \end{warningbox}
 
 \section{Struct Comparison: Why memcmp is Dangerous}
@@ -1325,15 +1325,15 @@ for (Task* t = head; t; t = t->next) {
 
 \section{Real-World Data Structures: What Production Code Actually Uses}
 
-Every data structure in C is built from structs. But textbooks teach linked lists and binary trees in isolation, never showing you how professionals actually implement them in production code. This section covers the data structures you'll see in real codebases—with all the practical details textbooks skip.
+Every data structure in C is built from structs. But textbooks teach linked lists and binary trees in isolation, never showing you how professionals actually implement them in production code. This section covers the data structures you'll see in real codebases---with all the practical details textbooks skip.
 
 \subsection{Dynamic Arrays (Vectors): The Most Common Data Structure}
 
 Let's start with the single most important data structure in C: the dynamic array, also called a vector or resizable array.
 
-\textbf{What is a dynamic array?} Think of it like a grocery list. A regular C array is like writing your list on a sticky note—you have limited space, and once it's full, you can't add more items. A dynamic array is like having a magic notebook: when you run out of space, it automatically gives you a bigger page and copies everything over.
+\textbf{What is a dynamic array?} Think of it like a grocery list. A regular C array is like writing your list on a sticky note---you have limited space, and once it's full, you can't add more items. A dynamic array is like having a magic notebook: when you run out of space, it automatically gives you a bigger page and copies everything over.
 
-In C++, this is \texttt{std::vector}. In Python, it's just called a list. In Java, it's \texttt{ArrayList}. Every modern language has one because they're incredibly useful. But in C, you have to build it yourself—and understanding how it works internally makes you a better programmer in \textit{any} language.
+In C++, this is \texttt{std::vector}. In Python, it's just called a list. In Java, it's \texttt{ArrayList}. Every modern language has one because they're incredibly useful. But in C, you have to build it yourself---and understanding how it works internally makes you a better programmer in \textit{any} language.
 
 \textbf{Why are dynamic arrays everywhere?} Three reasons:
 \begin{enumerate}
@@ -1371,7 +1371,7 @@ typedef struct {
 //             for 10 items but only use 3. This lets us add more items
 //             without reallocating every time. It's like buying a
 //             filing cabinet with 10 slots even though you only have
-//             3 folders—you have room to grow.
+//             3 folders---you have room to grow.
 
 // Create empty vector
 Vector* vector_create(void) {
@@ -1385,20 +1385,20 @@ Vector* vector_create(void) {
 }
 
 // Add element (with automatic growth)
-// This is the heart of the dynamic array—this is what makes it "dynamic"
+// This is the heart of the dynamic array---this is what makes it "dynamic"
 int vector_push(Vector* v, void* item) {
     // Step 1: Check if we have room
     // If size equals capacity, we're full. Time to grow!
     if (v->size >= v->capacity) {
         // Growth strategy: DOUBLE the capacity each time
         // If capacity is 0 (new vector), start with 8
-        // Otherwise, double it: 8 → 16 → 32 → 64 → 128...
+        // Otherwise, double it: 8 -> 16 -> 32 -> 64 -> 128...
         //
         // Why double? It's the magic of "amortized O(1)":
         // - If we grew by +1 each time: 1, 2, 3, 4... we'd reallocate
         //   on EVERY insertion. Terrible!
         // - If we double: 1, 2, 4, 8, 16... we reallocate rarely
-        // - Total copies for n items: 1 + 2 + 4 + 8... ≈ 2n
+        // - Total copies for n items: 1 + 2 + 4 + 8... ~= 2n
         // - Average per item: 2n/n = 2 = O(1)
         size_t new_capacity = v->capacity ? v->capacity * 2 : 8;
 
@@ -1407,12 +1407,12 @@ int vector_push(Vector* v, void* item) {
         // otherwise it allocates new memory and copies for us
         void** new_data = realloc(v->data,
                                   new_capacity * sizeof(void*));
-        if (!new_data) return -1;  // Out of memory—very rare
+        if (!new_data) return -1;  // Out of memory---very rare
 
         // Step 3: Update our struct
         v->data = new_data;
         v->capacity = new_capacity;
-        // Note: size stays the same—we didn't add items yet,
+        // Note: size stays the same---we didn't add items yet,
         // just made room for future items
     }
 
@@ -1456,30 +1456,30 @@ for (size_t i = 0; i < files->size; i++) {
 // What happened behind the scenes:
 // 1. vector_create() allocated the struct but data is NULL
 // 2. First push: capacity was 0, so we allocated space for 8 items
-// 3. Second push: capacity is 8, size is 1, plenty of room—just add
-// 4. Third push: capacity is 8, size is 2, still room—just add
+// 3. Second push: capacity is 8, size is 1, plenty of room---just add
+// 4. Third push: capacity is 8, size is 2, still room---just add
 // 5. If we kept pushing to the 9th item, we'd reallocate to capacity 16
 \end{lstlisting}
 
 \begin{tipbox}
-\textbf{Why doubling works:} This is one of the most elegant algorithms in computer science. When capacity doubles each time (1 → 2 → 4 → 8 → 16...), the \textit{amortized} cost of insertion is O(1).
+\textbf{Why doubling works:} This is one of the most elegant algorithms in computer science. When capacity doubles each time (1 -> 2 -> 4 -> 8 -> 16...), the \textit{amortized} cost of insertion is O(1).
 
 Here's why: To insert n items, we copy at most 1 + 2 + 4 + 8 + ... + n items total. That sum equals approximately 2n. So 2n copies for n insertions = 2 copies per insertion on average. That's constant time!
 
-Growing by a fixed amount (+10 each time) would be: 10 + 20 + 30 + 40 + ... + n = O(n²) total copies. Terrible!
+Growing by a fixed amount (+10 each time) would be: 10 + 20 + 30 + 40 + ... + n = O(n$^2$) total copies. Terrible!
 
-This is why \textit{every} professional implementation doubles: Redis, Linux kernel, Git, Python, Java, C++. It's not arbitrary—it's mathematically optimal.
+This is why \textit{every} professional implementation doubles: Redis, Linux kernel, Git, Python, Java, C++. It's not arbitrary---it's mathematically optimal.
 \end{tipbox}
 
 \subsection{Type-Safe Vectors with Macros}
 
 The generic vector above stores \texttt{void*} (pointers to anything), which means you lose type safety. You could accidentally store an \texttt{int} where you meant to store a string, and the compiler won't warn you. You have to remember to cast everything back to the right type.
 
-\textbf{The problem:} \texttt{void*} is like a bag that can hold anything. That's flexible but dangerous. You can put a shoe in a bag labeled "books" and the bag doesn't care—but you'll be confused later when you pull out a shoe instead of a book.
+\textbf{The problem:} \texttt{void*} is like a bag that can hold anything. That's flexible but dangerous. You can put a shoe in a bag labeled "books" and the bag doesn't care---but you'll be confused later when you pull out a shoe instead of a book.
 
 \textbf{The solution:} Generate specialized versions for each type you need. Instead of one generic vector that stores \texttt{void*}, we create \texttt{int\_vector} that stores \texttt{int}, \texttt{string\_vector} that stores \texttt{char*}, etc. Now the compiler knows what type each vector holds and can catch mistakes.
 
-How do we avoid writing the same code 20 times? Macros! We write the code once as a macro, then "stamp out" copies for different types. It's like a cookie cutter—one template, many cookies.
+How do we avoid writing the same code 20 times? Macros! We write the code once as a macro, then "stamp out" copies for different types. It's like a cookie cutter---one template, many cookies.
 
 \begin{lstlisting}
 // Macro to define a type-safe vector
@@ -1540,27 +1540,27 @@ int value = int_vector_get(numbers, 0);  // Returns int, no casting!
 // With void*, this would silently compile and crash at runtime.
 
 // Generate more types as needed:
-// DEFINE_VECTOR(float)   → float_vector
-// DEFINE_VECTOR(char*)   → char_ptr_vector (yes, that works!)
-// DEFINE_VECTOR(MyStruct) → MyStruct_vector
+// DEFINE_VECTOR(float)   -> float_vector
+// DEFINE_VECTOR(char*)   -> char_ptr_vector (yes, that works!)
+// DEFINE_VECTOR(MyStruct) -> MyStruct_vector
 \end{lstlisting}
 
 \subsection{Hash Tables: Fast Lookups Everywhere}
 
 After dynamic arrays, hash tables are the second most important data structure. If you've used Python dictionaries, JavaScript objects, or Java HashMaps, you've used hash tables.
 
-\textbf{What's the problem they solve?} Imagine you have a phone book with 1 million names. You want to find "John Smith." With an array, you'd have to check every entry until you find him—potentially 1 million checks! With a hash table, you can find him in typically just 1-2 checks. That's the magic.
+\textbf{What's the problem they solve?} Imagine you have a phone book with 1 million names. You want to find "John Smith." With an array, you'd have to check every entry until you find him---potentially 1 million checks! With a hash table, you can find him in typically just 1-2 checks. That's the magic.
 
 \textbf{How do they work?} Think of a hash table like a filing cabinet with 128 drawers (we'll use 128 for this example). When you want to store "John Smith," you:
 \begin{enumerate}
-    \item Run his name through a \textit{hash function}—a math formula that converts "John Smith" into a number, say 47
+    \item Run his name through a \textit{hash function}---a math formula that converts "John Smith" into a number, say 47
     \item Put his data in drawer \#47
-    \item Later, when looking up "John Smith," hash it again (gets 47), check drawer \#47—found!
+    \item Later, when looking up "John Smith," hash it again (gets 47), check drawer \#47---found!
 \end{enumerate}
 
-\textbf{What if two names hash to the same drawer?} This is called a \textit{collision}. Each drawer is actually a linked list, so drawer \#47 might contain chains of people: "John Smith" → "Jane Doe" → "Bob Jones" (if they all hashed to 47). You walk through the chain comparing names. Still way faster than searching 1 million entries!
+\textbf{What if two names hash to the same drawer?} This is called a \textit{collision}. Each drawer is actually a linked list, so drawer \#47 might contain chains of people: "John Smith" -> "Jane Doe" -> "Bob Jones" (if they all hashed to 47). You walk through the chain comparing names. Still way faster than searching 1 million entries!
 
-Every language runtime, database, and compiler uses hash tables. Python dicts, Redis hashes, browser DOM lookups, Git object storage—all hash tables underneath.
+Every language runtime, database, and compiler uses hash tables. Python dicts, Redis hashes, browser DOM lookups, Git object storage---all hash tables underneath.
 
 \begin{lstlisting}
 // Hash table with chaining (separate chaining)
@@ -1598,7 +1598,7 @@ unsigned long hash_string(const char* str) {
 
     // Why this formula? Dan Bernstein (djb) discovered that
     // multiplying by 33 and adding characters gives excellent
-    // distribution—different strings rarely hash to same number.
+    // distribution---different strings rarely hash to same number.
     // Why 33 specifically? It's prime, close to a power of 2,
     // and experimentally works well. Sometimes algorithms are
     // more art than science!
@@ -1729,16 +1729,16 @@ Redis uses separate chaining. Python uses open addressing. Both work, but separa
 
 \textbf{Load factor matters:} Load factor = count / TABLE\_SIZE. If you have 100 items in 128 buckets, load factor is 0.78.
 
-When load factor exceeds ~0.75, chains get long and lookups slow down. The fix: double the table size (128 → 256) and rehash everything. This is expensive but happens rarely—once you hit 96 items, then not again until 192.
+When load factor exceeds ~0.75, chains get long and lookups slow down. The fix: double the table size (128 -> 256) and rehash everything. This is expensive but happens rarely---once you hit 96 items, then not again until 192.
 
 Professional implementations watch the load factor and automatically resize. We're keeping it simple here, but real hash tables in Redis, Python, etc. all do this.
 \end{notebox}
 
 \subsection{Circular Buffers: For Queues and Streaming}
 
-Circular buffers (also called ring buffers) are the unsung heroes of system programming. They're used everywhere: audio processing, network packet buffers, logging systems, kernel message queues, serial port drivers—anywhere you need a fixed-size queue.
+Circular buffers (also called ring buffers) are the unsung heroes of system programming. They're used everywhere: audio processing, network packet buffers, logging systems, kernel message queues, serial port drivers---anywhere you need a fixed-size queue.
 
-\textbf{What problem do they solve?} Imagine streaming audio from Spotify. Audio data arrives continuously, and your speakers play it continuously. You need a buffer in between—but you can't let it grow forever (you'd run out of memory), and you can't keep reallocating (too slow, causes glitches).
+\textbf{What problem do they solve?} Imagine streaming audio from Spotify. Audio data arrives continuously, and your speakers play it continuously. You need a buffer in between---but you can't let it grow forever (you'd run out of memory), and you can't keep reallocating (too slow, causes glitches).
 
 Solution: A circular buffer! It's a fixed-size buffer that "wraps around" like a clock. When you write past the end, you wrap back to the beginning. It's perfect for producer-consumer problems where one thread/process generates data and another consumes it.
 
@@ -1954,7 +1954,7 @@ TreeNode* bst_insert_node(TreeNode* node, int key, void* value) {
     // How recursion works here:
     // To insert 6 into tree with root 5:
     // 1. 6 > 5, so recurse on right subtree
-    // 2. Right subtree might be empty → create node 6
+    // 2. Right subtree might be empty -> create node 6
     // 3. Return node 6 back up
     // 4. Set node 5's right pointer to node 6
     // Done!
@@ -2043,15 +2043,15 @@ printf("User 42: %s\n", name);  // Alice
             5
 \end{verbatim}
 
-Now search is O(n) again! All benefits lost. This actually happens in practice—imagine inserting timestamps or IDs in order.
+Now search is O(n) again! All benefits lost. This actually happens in practice---imagine inserting timestamps or IDs in order.
 
-\textbf{Solutions—balanced tree variants:}
+\textbf{Solutions---balanced tree variants:}
 \begin{itemize}
     \item \textbf{Red-black trees}: Linux kernel's \texttt{rbtree}. Guarantees O(log n) by keeping tree "roughly" balanced. After every insert/delete, performs rotations to maintain balance. Most common in systems programming.
 
     \item \textbf{AVL trees}: More strictly balanced than red-black. Slightly faster search, slightly slower insert/delete. Good when reads outnumber writes.
 
-    \item \textbf{B-trees}: Not binary (many children per node). Used by every database (SQLite, PostgreSQL, MySQL). Optimized for disk I/O—read entire disk blocks at once.
+    \item \textbf{B-trees}: Not binary (many children per node). Used by every database (SQLite, PostgreSQL, MySQL). Optimized for disk I/O---read entire disk blocks at once.
 
     \item \textbf{Splay trees}: Self-adjusting. Recently accessed items move to top. Good for non-uniform access patterns.
 \end{itemize}
@@ -2100,7 +2100,7 @@ typedef struct {
 } SkipList;
 
 // Random level for new nodes (geometric distribution)
-// This is the "magic" of skip lists—randomness creates balance!
+// This is the "magic" of skip lists---randomness creates balance!
 int random_level(void) {
     int level = 1;  // Every node is at least level 1
 
@@ -2392,7 +2392,7 @@ if (!bloom_maybe_contains(spam_filter, "hello")) {
 \end{lstlisting}
 
 \begin{notebox}
-\textbf{Why Bloom filters?} Tiny memory footprint. A Bloom filter with 1\% false positive rate needs only ~10 bits per element. Compare that to a hash table which needs ~100 bits per element. Chrome uses Bloom filters to check billions of URLs against a malicious URL database—it would be impossible with hash tables.
+\textbf{Why Bloom filters?} Tiny memory footprint. A Bloom filter with 1\% false positive rate needs only ~10 bits per element. Compare that to a hash table which needs ~100 bits per element. Chrome uses Bloom filters to check billions of URLs against a malicious URL database---it would be impossible with hash tables.
 \end{notebox}
 
 \subsection{Comparison: When to Use Which Structure}
@@ -2407,7 +2407,7 @@ Hash Table & Key-value, fast lookup & O(1) avg & O(n) \\
 Circular Buffer & FIFO queue, streaming & O(1) & O(capacity) \\
 BST (balanced) & Sorted data, range queries & O(log n) & O(n) \\
 Skip List & Simpler than trees & O(log n) avg & O(n) \\
-Trie & String prefixes, autocomplete & O(k) & O(alphabet × n) \\
+Trie & String prefixes, autocomplete & O(k) & O(alphabet \times n) \\
 Bloom Filter & Set membership, huge sets & O(k) & O(bits) \\
 \hline
 \end{tabular}
@@ -2434,7 +2434,7 @@ You've now learned everything professionals know about structs and data structur
 \begin{itemize}
     \item \textbf{Memory layout}: Order members largest-to-smallest to minimize padding (can save 50\% memory)
     \item \textbf{Alignment}: CPUs require data aligned to natural boundaries for performance
-    \item \textbf{Padding}: Compiler adds invisible gaps—understand them to optimize
+    \item \textbf{Padding}: Compiler adds invisible gaps---understand them to optimize
     \item \textbf{Packing}: Use \texttt{\#pragma pack} only for external formats, not normal code
 \end{itemize}
 
@@ -2454,7 +2454,7 @@ You've now learned everything professionals know about structs and data structur
 \subsection{Essential Data Structures}
 
 \begin{itemize}
-    \item \textbf{Dynamic arrays}: The most common structure—use for 80\% of cases
+    \item \textbf{Dynamic arrays}: The most common structure---use for 80\% of cases
     \item \textbf{Hash tables}: O(1) lookups for key-value pairs
     \item \textbf{Circular buffers}: Perfect for queues, streaming, real-time systems
     \item \textbf{Binary trees}: Use balanced variants (red-black, AVL) in production
@@ -2474,7 +2474,7 @@ You've now learned everything professionals know about structs and data structur
 \end{itemize}
 
 \begin{tipbox}
-Structs are the foundation of C programming—every data structure, every abstraction, every pattern is built from them. Master struct layout and you'll write memory-efficient code. Master struct patterns and you'll write maintainable code. Master data structures and you'll write professional code.
+Structs are the foundation of C programming---every data structure, every abstraction, every pattern is built from them. Master struct layout and you'll write memory-efficient code. Master struct patterns and you'll write maintainable code. Master data structures and you'll write professional code.
 
 These techniques power:
 \begin{itemize}

@@ -17,7 +17,7 @@ When you clone a real C project and see \texttt{./configure \&\& make \&\& make 
     \item \textbf{2020s}: Containers and CI/CD automation
 \end{itemize}
 
-Each layer adds complexity, but also solves real problems. This chapter explains \textit{everything}—from the configure script you run to the installation paths hardcoded in the binary.
+Each layer adds complexity, but also solves real problems. This chapter explains \textit{everything}---from the configure script you run to the installation paths hardcoded in the binary.
 
 \subsection{The Problem: Write Once, Run Anywhere}
 
@@ -250,7 +250,7 @@ src/main.o: src/main.c
 	$(CC) $(CFLAGS) -Iinclude -c src/main.c -o src/main.o
 \end{lstlisting}
 
-\textbf{The key insight}: configure is a giant detection script. It doesn't compile anything—it just TESTS what's available and generates Makefiles tailored to YOUR system.
+\textbf{The key insight}: configure is a giant detection script. It doesn't compile anything---it just TESTS what's available and generates Makefiles tailored to YOUR system.
 
 \subsection{Step 3: Run Make - Actual Compilation}
 
@@ -659,7 +659,7 @@ Libraries package reusable code. Understanding them is crucial.
 
 \subsection{Static Libraries (.a files)}
 
-Linked into executable at compile time—becomes part of the binary.
+Linked into executable at compile time---becomes part of the binary.
 
 \begin{lstlisting}
 # Create static library
@@ -689,7 +689,7 @@ program: main.o libmyutils.a
 
 \textbf{Static library advantages}:
 \begin{itemize}
-    \item No runtime dependencies—program is self-contained
+    \item No runtime dependencies---program is self-contained
     \item Slightly faster (no dynamic linking overhead)
     \item Easier deployment (one file)
 \end{itemize}
@@ -703,7 +703,7 @@ program: main.o libmyutils.a
 
 \subsection{Dynamic Libraries (.so on Linux, .dylib on macOS, .dll on Windows)}
 
-Loaded at runtime—shared between programs.
+Loaded at runtime---shared between programs.
 
 \begin{lstlisting}
 # Create shared library
@@ -747,7 +747,7 @@ program: main.o libmyutils.so
 
 \textbf{Disadvantages}:
 \begin{itemize}
-    \item Runtime dependencies—must have .so installed
+    \item Runtime dependencies---must have .so installed
     \item Slightly slower (dynamic linking overhead)
     \item Version conflicts ("DLL hell")
     \item More complex deployment
@@ -1002,7 +1002,7 @@ clean:
 	rm -f $(OBJECTS) program
 \end{lstlisting}
 
-\textbf{Problem}: Recursive make is slow—each subdirectory is a separate make invocation, can't parallelize efficiently.
+\textbf{Problem}: Recursive make is slow---each subdirectory is a separate make invocation, can't parallelize efficiently.
 
 \subsection{Non-Recursive Make (Better)}
 
@@ -1134,7 +1134,7 @@ test('main tests', test_exe)
 
 \subsection{Out-of-Tree Builds}
 
-Never build in source directory—keeps source tree clean:
+Never build in source directory---keeps source tree clean:
 
 \begin{lstlisting}
 # Bad: build in source tree
@@ -2569,7 +2569,7 @@ redis-server: redis.o networking.o ...
 
 \subsection{Example 2: SQLite (Amalgamation Build)}
 
-SQLite uses a clever trick—ship all code in ONE file:
+SQLite uses a clever trick---ship all code in ONE file:
 
 \begin{lstlisting}
 # Download SQLite
@@ -2865,7 +2865,7 @@ PACKAGER WORKFLOW (Debian/Fedora):
 \textbf{Why each step matters}:
 
 \begin{itemize}
-    \item \textbf{configure}: Can't hardcode paths—every system is different
+    \item \textbf{configure}: Can't hardcode paths---every system is different
     \item \textbf{config.h}: Runtime checks for missing functions
     \item \textbf{Makefile generation}: Different flags per system
     \item \textbf{pkg-config}: Libraries install in different locations
@@ -2896,7 +2896,7 @@ make install    # Install
 # Why make? Compiles with detected settings
 \end{lstlisting}
 
-\textbf{Key insight}: Real C projects aren't complex to be difficult—they're complex because they solve REAL problems (portability across dozens of Unix variants, optional dependencies, graceful degradation when features missing).
+\textbf{Key insight}: Real C projects aren't complex to be difficult---they're complex because they solve REAL problems (portability across dozens of Unix variants, optional dependencies, graceful degradation when features missing).
 
 Every confusing part has a reason:
 \begin{itemize}
@@ -2907,4 +2907,4 @@ Every confusing part has a reason:
     \item DESTDIR exists because packagers need staging directories
 \end{itemize}
 
-Now when you clone a C project, you understand the build system isn't arbitrary complexity—it's battle-tested solutions to decades of portability problems!
+Now when you clone a C project, you understand the build system isn't arbitrary complexity---it's battle-tested solutions to decades of portability problems!

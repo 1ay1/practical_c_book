@@ -2,7 +2,7 @@
 
 \section{Introduction: The Pursuit of Speed}
 
-C has been the language of choice for performance-critical systems for over 50 years. During this time, programmers have discovered countless tricks, idioms, and patterns to squeeze every last cycle out of the hardware. This chapter collects the wisdom of generations of C programmers—from the early days of PDP-11s to modern multi-core processors with complex memory hierarchies.
+C has been the language of choice for performance-critical systems for over 50 years. During this time, programmers have discovered countless tricks, idioms, and patterns to squeeze every last cycle out of the hardware. This chapter collects the wisdom of generations of C programmers---from the early days of PDP-11s to modern multi-core processors with complex memory hierarchies.
 
 \begin{tipbox}
 \textbf{The Golden Rule:} Profile first, optimize second. Measure everything. Your intuition about performance is probably wrong.
@@ -2461,7 +2461,7 @@ int x = abs(a);
 
 \begin{enumerate}
     \item \textbf{Profile first}: Use gprof, perf, or valgrind
-    \item \textbf{Fix algorithms}: O(n log n) beats optimized O(n²)
+    \item \textbf{Fix algorithms}: O(n log n) beats optimized O(n$^2$)
     \item \textbf{Cache locality}: Sequential access, avoid pointer chasing
     \item \textbf{Reduce allocations}: Pool, arena, or stack allocation
     \item \textbf{Compiler flags}: -O3 -march=native -flto
@@ -2480,21 +2480,21 @@ Performance optimization in C is about understanding the hardware and helping th
 \begin{itemize}
     \item \textbf{Cache is king}: Sequential access beats random by 100x
     \item \textbf{Profile everything}: Measure, don't guess
-    \item \textbf{Algorithm matters most}: O(n) beats optimized O(n²)
+    \item \textbf{Algorithm matters most}: O(n) beats optimized O(n$^2$)
     \item \textbf{Help the compiler}: Use restrict, const, inline, pure
     \item \textbf{Minimize allocations}: Use pools, arenas, stack
     \item \textbf{Branch prediction}: Use likely/unlikely, or go branchless
     \item \textbf{SIMD for parallelism}: 4-16x speedup for data-parallel code
-    \item \textbf{Optimize hot paths only}: 90/10 rule—90\% of time in 10\% of code
+    \item \textbf{Optimize hot paths only}: 90/10 rule---90\% of time in 10\% of code
     \item \textbf{Maintain readability}: Clear code that's 95\% fast beats unreadable code that's 100\% fast
 \end{itemize}
 
-The best C programmers don't just write fast code—they write correct, maintainable code that's fast where it matters. Profile first, optimize second, and measure everything!
+The best C programmers don't just write fast code---they write correct, maintainable code that's fast where it matters. Profile first, optimize second, and measure everything!
 
 \begin{tipbox}
-\textbf{Remember:} ``Premature optimization is the root of all evil.'' — Donald Knuth
+\textbf{Remember:} ``Premature optimization is the root of all evil.'' --- Donald Knuth
 
-But also: ``We should forget about small efficiencies, say about 97\% of the time... yet we should not pass up our opportunities in that critical 3\%.'' — The rest of that quote!
+But also: ``We should forget about small efficiencies, say about 97\% of the time... yet we should not pass up our opportunities in that critical 3\%.'' --- The rest of that quote!
 \end{tipbox}
 
 \section{Legendary Optimizations from History}
@@ -3208,7 +3208,7 @@ What these legendary optimizations teach us:
 \begin{enumerate}
     \item \textbf{Understand your hardware}: Quake's fast inverse sqrt, Mode X
     \item \textbf{Question assumptions}: Reverse-Z (put far at 0, not near)
-    \item \textbf{Trade memory for speed}: zlib lookup tables (1KB → 3x faster)
+    \item \textbf{Trade memory for speed}: zlib lookup tables (1KB -> 3x faster)
     \item \textbf{Trade CPU for memory}: Redis ziplist (slower insert, 90\% less memory)
     \item \textbf{Specialize for common case}: LuaJIT traces with type info
     \item \textbf{Eliminate synchronization}: Linux RCU (readers never block)
@@ -3218,4 +3218,4 @@ What these legendary optimizations teach us:
     \item \textbf{Measure and profile}: All of them profiled first!
 \end{enumerate}
 
-These aren't just performance tricks—they're \textbf{paradigm shifts} that changed what was possible in software. Study them, understand the principles, and apply those principles to your own code!
+These aren't just performance tricks---they're \textbf{paradigm shifts} that changed what was possible in software. Study them, understand the principles, and apply those principles to your own code!

@@ -2,7 +2,7 @@
 
 \section{The Reality of Memory in C}
 
-Memory management in C is where theory meets brutal reality. You have complete control, which means complete responsibility. One mistake—a dangling pointer, a double-free, a tiny leak—and your production server crashes at 2 AM. Or worse, it doesn't crash immediately. It corrupts data silently for weeks until someone notices the financial reports are wrong.
+Memory management in C is where theory meets brutal reality. You have complete control, which means complete responsibility. One mistake---a dangling pointer, a double-free, a tiny leak---and your production server crashes at 2 AM. Or worse, it doesn't crash immediately. It corrupts data silently for weeks until someone notices the financial reports are wrong.
 
 Think of memory management like managing a parking lot. Each malloc() is like a car entering and getting a parking spot. Each free() is like a car leaving, making that spot available again. Simple enough, right? But what if:
 \begin{itemize}
@@ -12,17 +12,17 @@ Think of memory management like managing a parking lot. Each malloc() is like a 
     \item You forget which spot a car is in and can't tell it to leave (lost pointer)
 \end{itemize}
 
-These aren't just theoretical problems—they're the daily reality of C programming. Here's what separates hobby C programmers from professionals: hobby programmers think malloc() and free() are the whole story. Professionals know that's just the beginning. This chapter covers the patterns, tools, and hard-won wisdom that keep production systems stable.
+These aren't just theoretical problems---they're the daily reality of C programming. Here's what separates hobby C programmers from professionals: hobby programmers think malloc() and free() are the whole story. Professionals know that's just the beginning. This chapter covers the patterns, tools, and hard-won wisdom that keep production systems stable.
 
 \begin{warningbox}
-Memory bugs are the hardest to debug. They're non-deterministic, they manifest far from their cause, and they corrupt state in ways that make the debugger lie to you. The patterns in this chapter aren't just optimizations—they're survival techniques.
+Memory bugs are the hardest to debug. They're non-deterministic, they manifest far from their cause, and they corrupt state in ways that make the debugger lie to you. The patterns in this chapter aren't just optimizations---they're survival techniques.
 \end{warningbox}
 
 \section{The Ownership Pattern: Who Frees What?}
 
 The \#1 cause of memory bugs: unclear ownership. Who is responsible for freeing this pointer? If you can't answer that immediately, you have a bug waiting to happen.
 
-Imagine you borrow a book from a friend. The ownership is clear: it's their book, you're just using it temporarily. You don't throw it away when you're done—you return it to them. But what if someone hands you a book and walks away without a word? Is it yours now? Should you keep it? Throw it away? Give it to someone else? This confusion is exactly what happens with unclear memory ownership in C.
+Imagine you borrow a book from a friend. The ownership is clear: it's their book, you're just using it temporarily. You don't throw it away when you're done---you return it to them. But what if someone hands you a book and walks away without a word? Is it yours now? Should you keep it? Throw it away? Give it to someone else? This confusion is exactly what happens with unclear memory ownership in C.
 
 Let's start with the most common source of memory bugs: ambiguous ownership. Look at these function signatures and ask yourself: who is responsible for freeing the returned pointer?
 
@@ -48,9 +48,9 @@ const char* get_cached_username(int user_id);
 
 \subsection{Naming Conventions That Save Lives}
 
-Professional C codebases use naming conventions to communicate ownership. These aren't just style preferences—they're critical safety mechanisms. When you see a function name, you should immediately know what it does with memory.
+Professional C codebases use naming conventions to communicate ownership. These aren't just style preferences---they're critical safety mechanisms. When you see a function name, you should immediately know what it does with memory.
 
-Think of function names as instructions on a package. "create\_" is like "assembly required—you must dispose." "print\_" is like "for display only—do not consume." "destroy\_" is like "dispose of properly." These naming patterns tell you exactly what to do with the memory, without having to read documentation or guess.
+Think of function names as instructions on a package. "create\_" is like "assembly required---you must dispose." "print\_" is like "for display only---do not consume." "destroy\_" is like "dispose of properly." These naming patterns tell you exactly what to do with the memory, without having to read documentation or guess.
 
 \begin{lstlisting}
 // Allocating functions (caller must free):
@@ -82,14 +82,14 @@ int fclose(FILE* stream);  // Takes ownership, frees
 \end{lstlisting}
 
 \begin{tipbox}
-In professional codebases, ownership is documented in every function comment. "Caller must free", "Borrows pointer", "Takes ownership"—these phrases should be everywhere. Future you (at 3 AM debugging a customer's crash dump) will be grateful.
+In professional codebases, ownership is documented in every function comment. "Caller must free", "Borrows pointer", "Takes ownership"---these phrases should be everywhere. Future you (at 3 AM debugging a customer's crash dump) will be grateful.
 \end{tipbox}
 
 \subsection{The Transfer Pattern}
 
 Sometimes ownership needs to change hands during an operation. This is tricky because it violates the simple "who allocates, frees" rule. The key is to make transfers explicit and document them heavily.
 
-Imagine a relay race: the first runner has the baton (ownership), then hands it off to the second runner. The first runner no longer has it—ownership transferred. Same with memory: sometimes a function takes something you own, does something with it, and gives you something else back. The original thing is gone (freed), but you now own the new thing. It's like trading in your old car for store credit—the car is gone, but now you have money that's yours to spend (or free, in programming terms).
+Imagine a relay race: the first runner has the baton (ownership), then hands it off to the second runner. The first runner no longer has it---ownership transferred. Same with memory: sometimes a function takes something you own, does something with it, and gives you something else back. The original thing is gone (freed), but you now own the new thing. It's like trading in your old car for store credit---the car is gone, but now you have money that's yours to spend (or free, in programming terms).
 
 \begin{lstlisting}
 // Ownership transfer - carefully documented
@@ -145,7 +145,7 @@ C doesn't have destructors, but GCC and Clang have a solution: the cleanup attri
 
 The idea is simple: mark a variable with a cleanup function, and the compiler automatically calls that function when the variable goes out of scope. It's like C++ RAII, but you have to opt-in per variable.
 
-Think of it like a hotel room: when you check out, housekeeping automatically comes to clean up. You don't have to remember to call housekeeping yourself—it happens automatically when you leave. The cleanup attribute does the same thing for your variables: when the variable "checks out" (goes out of scope), cleanup happens automatically. No matter how you leave the function—return normally, return early from an if statement, whatever—cleanup always happens.
+Think of it like a hotel room: when you check out, housekeeping automatically comes to clean up. You don't have to remember to call housekeeping yourself---it happens automatically when you leave. The cleanup attribute does the same thing for your variables: when the variable "checks out" (goes out of scope), cleanup happens automatically. No matter how you leave the function---return normally, return early from an if statement, whatever---cleanup always happens.
 
 \begin{lstlisting}
 // The cleanup attribute - GCC/Clang extension
@@ -209,16 +209,16 @@ void process_file(const char* path) {
 \end{lstlisting}
 
 \begin{notebox}
-The cleanup attribute is a GCC/Clang extension, not standard C. But it's widely supported and used in production code (systemd, GNOME, many Linux projects). Variables are cleaned up in reverse order of declaration—LIFO, just like stack unwinding.
+The cleanup attribute is a GCC/Clang extension, not standard C. But it's widely supported and used in production code (systemd, GNOME, many Linux projects). Variables are cleaned up in reverse order of declaration---LIFO, just like stack unwinding.
 \end{notebox}
 
 \section{Pool Allocator: Fast Allocation, Fast Deallocation}
 
-When you're allocating thousands of small objects of similar size, malloc() becomes a bottleneck. Why? Because malloc() is general-purpose—it has to handle any size, any alignment, any pattern. That generality has cost.
+When you're allocating thousands of small objects of similar size, malloc() becomes a bottleneck. Why? Because malloc() is general-purpose---it has to handle any size, any alignment, any pattern. That generality has cost.
 
-Pool allocators trade generality for speed. You pre-allocate a big chunk of memory and hand out pieces of it. Allocation is a simple pointer bump—no searching free lists, no coalescing blocks, no metadata overhead. It's O(1) and cache-friendly.
+Pool allocators trade generality for speed. You pre-allocate a big chunk of memory and hand out pieces of it. Allocation is a simple pointer bump---no searching free lists, no coalescing blocks, no metadata overhead. It's O(1) and cache-friendly.
 
-Imagine a restaurant during lunch rush. Normal malloc() is like each customer ordering a custom meal—the chef has to prepare each one individually, checking ingredients, measuring portions, plating carefully. Slow! A pool allocator is like a buffet: everything is pre-made in a big batch, and people just grab what they need. Super fast! The trade-off? The buffet only works if everyone wants similar food (similar-sized allocations), and you can't take food back to the kitchen one plate at a time—you clear the whole buffet at once when lunch is over.
+Imagine a restaurant during lunch rush. Normal malloc() is like each customer ordering a custom meal---the chef has to prepare each one individually, checking ingredients, measuring portions, plating carefully. Slow! A pool allocator is like a buffet: everything is pre-made in a big batch, and people just grab what they need. Super fast! The trade-off? The buffet only works if everyone wants similar food (similar-sized allocations), and you can't take food back to the kitchen one plate at a time---you clear the whole buffet at once when lunch is over.
 
 The trade-off? You can't free individual allocations. You free the whole pool at once. This works perfectly for request-scoped allocations (web servers), frame-scoped allocations (games), or parse-scoped allocations (compilers).
 
@@ -314,7 +314,7 @@ void handle_request(Request* req) {
 \end{lstlisting}
 
 \begin{tipbox}
-Pool allocators are perfect for request-scoped allocations (web servers, game frames, parsers). Allocation is O(1) bump-pointer, deallocation is O(1) reset. nginx, Apache, game engines all use variants of this pattern. (Though be careful—accessing freed memory after pool\_reset is instant undefined behavior.)
+Pool allocators are perfect for request-scoped allocations (web servers, game frames, parsers). Allocation is O(1) bump-pointer, deallocation is O(1) reset. nginx, Apache, game engines all use variants of this pattern. (Though be careful---accessing freed memory after pool\_reset is instant undefined behavior.)
 \end{tipbox}
 
 \subsection{Real Production Pattern: Per-Request Pools}
@@ -354,9 +354,9 @@ Pool allocators have a fixed size. What if you don't know how much you'll need? 
 
 An arena is like a pool, but when it runs out of space, it allocates another block and keeps going. You get the speed of pool allocation with the flexibility of dynamic sizing. The blocks form a linked list, and you allocate from the current block until it's full, then add a new block.
 
-Think of an arena allocator like a notebook for taking notes during a lecture. You start with one page (block), fill it up with notes (allocations), then flip to a new page when you run out of room. At the end of the lecture, you can tear out all the pages at once and recycle them—you don't erase each line individually. Fast writing, fast cleanup. The arena keeps adding new "pages" as needed, but cleans up everything at once.
+Think of an arena allocator like a notebook for taking notes during a lecture. You start with one page (block), fill it up with notes (allocations), then flip to a new page when you run out of room. At the end of the lecture, you can tear out all the pages at once and recycle them---you don't erase each line individually. Fast writing, fast cleanup. The arena keeps adding new "pages" as needed, but cleans up everything at once.
 
-This is perfect for parsers, compilers, and any code that builds large data structures during a phase, then throws them all away. Clang uses arenas for AST nodes—allocate millions of nodes during parsing, free them all at once after code generation.
+This is perfect for parsers, compilers, and any code that builds large data structures during a phase, then throws them all away. Clang uses arenas for AST nodes---allocate millions of nodes during parsing, free them all at once after code generation.
 
 \begin{lstlisting}
 #define ARENA_BLOCK_SIZE (64 * 1024)  // 64KB blocks
@@ -497,14 +497,14 @@ void parse_file(const char* path) {
 \end{lstlisting}
 
 \begin{notebox}
-Arena allocators are used in compilers (LLVM, GCC), game engines, and any code that builds large temporary data structures. Clang compiles faster partly because it uses arenas for AST nodes—no individual frees during compilation. (Though memory usage can grow large—trade-off between speed and memory.)
+Arena allocators are used in compilers (LLVM, GCC), game engines, and any code that builds large temporary data structures. Clang compiles faster partly because it uses arenas for AST nodes---no individual frees during compilation. (Though memory usage can grow large---trade-off between speed and memory.)
 \end{notebox}
 
 \section{Reference Counting: Shared Ownership}
 
 When multiple owners need the same data, reference counting solves the "who frees it?" problem. Instead of transferring ownership, we share it. Each owner increments the reference count when they take a reference, and decrements it when they're done. The last owner to decrement (reaching zero) frees the memory.
 
-Imagine a shared apartment with roommates. There's a shared Netflix account that everyone uses. Each roommate who wants to use it "retains" it (increments the count). When someone moves out, they "release" it (decrement the count). As long as someone is still using it (count > 0), you keep paying for the subscription. When the last roommate moves out (count reaches 0), you cancel the subscription (free the memory). Nobody has to coordinate who's responsible—the last person out automatically handles cleanup.
+Imagine a shared apartment with roommates. There's a shared Netflix account that everyone uses. Each roommate who wants to use it "retains" it (increments the count). When someone moves out, they "release" it (decrement the count). As long as someone is still using it (count > 0), you keep paying for the subscription. When the last roommate moves out (count reaches 0), you cancel the subscription (free the memory). Nobody has to coordinate who's responsible---the last person out automatically handles cleanup.
 
 This is how COM works on Windows, how Python's memory management works, and how Objective-C's ARC works. It's simple, deterministic, and solves a lot of problems. But it has gotchas (circular references, atomic overhead in multithreaded code).
 
@@ -566,7 +566,7 @@ void process_data(void) {
 
 \subsection{Thread-Safe Reference Counting}
 
-The simple reference counting above has a fatal flaw in multithreaded code: ref\_count++ isn't atomic. Two threads can both read the same value, both increment it, both write back the same result—and you've lost a reference. Use atomic operations to fix this.
+The simple reference counting above has a fatal flaw in multithreaded code: ref\_count++ isn't atomic. Two threads can both read the same value, both increment it, both write back the same result---and you've lost a reference. Use atomic operations to fix this.
 
 \begin{lstlisting}
 #include <stdatomic.h>
@@ -614,14 +614,14 @@ void buffer_release_atomic(AtomicRefCountedBuffer* buf) {
 \end{lstlisting}
 
 \begin{warningbox}
-Reference counting seems simple but has gotchas: circular references cause leaks (A references B, B references A—neither freed). Also, the atomic operations have performance cost. Use only when you truly need shared ownership. (And consider weak references to break cycles, though that's beyond basic C.)
+Reference counting seems simple but has gotchas: circular references cause leaks (A references B, B references A---neither freed). Also, the atomic operations have performance cost. Use only when you truly need shared ownership. (And consider weak references to break cycles, though that's beyond basic C.)
 \end{warningbox}
 
 \section{Custom Allocators: The Strategy Pattern}
 
 Sometimes you need to control allocation strategy at runtime. Custom allocators let you swap strategies. This is the Strategy pattern from design patterns: define an interface for allocation, and swap implementations as needed.
 
-Think of custom allocators like choosing a payment method at checkout. The store doesn't care if you pay with cash, credit card, or mobile payment—they all work through the same interface (swipe/tap/insert). But each method works differently internally. Custom allocators are the same: they all look the same from outside (alloc/free functions), but inside they can use completely different strategies. You can swap payment methods without rewriting the whole checkout process, just like you can swap allocators without rewriting your whole program.
+Think of custom allocators like choosing a payment method at checkout. The store doesn't care if you pay with cash, credit card, or mobile payment---they all work through the same interface (swipe/tap/insert). But each method works differently internally. Custom allocators are the same: they all look the same from outside (alloc/free functions), but inside they can use completely different strategies. You can swap payment methods without rewriting the whole checkout process, just like you can swap allocators without rewriting your whole program.
 
 Why would you want this? Testing (inject a mock allocator), profiling (inject a counting allocator), performance (swap to a specialized allocator), debugging (inject a leak-detecting allocator). It's powerful because allocation strategy becomes a runtime decision, not a compile-time decision.
 
@@ -717,13 +717,13 @@ This pattern is used in video games (swap allocators for different game systems)
 
 Memory bugs are the worst kind of bugs. They're non-deterministic, they manifest far from their cause, and they corrupt state silently. You need tools to catch them. Here are patterns for building your own debugging tools.
 
-Think of memory bugs like a silent leak in your water pipes. You don't see it immediately. The water damage shows up on the other side of the house, days later. By then, you have no idea where the leak started. That's why we need tools—like water meters that alert you immediately when something's wrong.
+Think of memory bugs like a silent leak in your water pipes. You don't see it immediately. The water damage shows up on the other side of the house, days later. By then, you have no idea where the leak started. That's why we need tools---like water meters that alert you immediately when something's wrong.
 
 \subsection{Simple Leak Tracker}
 
 This is a custom malloc/free wrapper that tracks every allocation. At program exit, report what wasn't freed. Simple, effective, and catches leaks immediately.
 
-It's like a sign-in/sign-out sheet at a library. Every time you borrow a book (malloc), you sign your name. When you return it (free), you cross your name off. At closing time, if any names are still on the list, those books weren't returned—that's a leak. The librarian (this tool) can tell you exactly who forgot to return what.
+It's like a sign-in/sign-out sheet at a library. Every time you borrow a book (malloc), you sign your name. When you return it (free), you cross your name off. At closing time, if any names are still on the list, those books weren't returned---that's a leak. The librarian (this tool) can tell you exactly who forgot to return what.
 
 \begin{lstlisting}
 #ifdef DEBUG_MEMORY
@@ -877,7 +877,7 @@ void guarded_free(void* ptr) {
 
 Professional C developers use tools. Always. These tools catch bugs that code review, testing, and careful programming miss. Use them in every build, every test run. The cost is nothing compared to debugging production memory corruption.
 
-Think of these tools like spell-check or grammar-check for your writing. Sure, you could proofread manually, but why? The tool catches typos instantly that you'd miss. Same with memory tools—they catch bugs instantly that you'd spend hours debugging manually. Not using them is like refusing to use spell-check because "real writers don't need it." (Spoiler: real writers use spell-check.)
+Think of these tools like spell-check or grammar-check for your writing. Sure, you could proofread manually, but why? The tool catches typos instantly that you'd miss. Same with memory tools---they catch bugs instantly that you'd spend hours debugging manually. Not using them is like refusing to use spell-check because "real writers don't need it." (Spoiler: real writers use spell-check.)
 
 \begin{lstlisting}
 // Use AddressSanitizer (ASan) - built into GCC/Clang
@@ -919,7 +919,7 @@ In professional development: always run tests with AddressSanitizer enabled. Alw
 
 The Linux kernel allocates millions of objects of the same size: inodes, dentries, task structs, etc. The slab allocator is optimized for this pattern. Pre-allocate "slabs" (pages) of objects, and hand them out as needed. When freed, they go back to the free list. Fast allocation (pop from free list), fast deallocation (push to free list), minimal fragmentation.
 
-Imagine an egg carton factory. Instead of making custom containers for each individual egg, you make standard 12-egg cartons. When someone needs to store eggs, you hand them a carton (allocation). When they're done, the carton goes back to the stack of empty cartons (free list), ready to be reused. Fast, efficient, no waste. That's a slab allocator: pre-made containers for same-sized objects. The Linux kernel uses this for kernel objects that get allocated and freed constantly—much faster than custom-sizing each allocation.
+Imagine an egg carton factory. Instead of making custom containers for each individual egg, you make standard 12-egg cartons. When someone needs to store eggs, you hand them a carton (allocation). When they're done, the carton goes back to the stack of empty cartons (free list), ready to be reused. Fast, efficient, no waste. That's a slab allocator: pre-made containers for same-sized objects. The Linux kernel uses this for kernel objects that get allocated and freed constantly---much faster than custom-sizing each allocation.
 
 \begin{lstlisting}
 // Simplified version of Linux slab allocator concept
@@ -1023,7 +1023,7 @@ void slab_destroy(SlabAllocator* slab) {
 
 \section{Production Patterns: What the Pros Do}
 
-Here are patterns from production systems that run 24/7 and handle millions of requests. These aren't theoretical—they're battle-tested solutions to real problems.
+Here are patterns from production systems that run 24/7 and handle millions of requests. These aren't theoretical---they're battle-tested solutions to real problems.
 
 \begin{lstlisting}
 // Pattern 1: Per-subsystem allocators

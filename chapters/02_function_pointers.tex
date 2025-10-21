@@ -2,7 +2,7 @@
 
 \section{What Are Function Pointers, Really?}
 
-In C, functions aren't just code—they're stored at memory addresses just like variables. A function pointer is a variable that stores the address of a function, allowing you to call different functions dynamically.
+In C, functions aren't just code---they're stored at memory addresses just like variables. A function pointer is a variable that stores the address of a function, allowing you to call different functions dynamically.
 
 But here's what they don't teach in school: function pointers are how C achieves late binding without a virtual machine. They're how the Linux kernel implements system calls, how qsort can sort anything, how GUI frameworks handle events, and how game engines implement component systems. Basically, they're C's way of saying "I can be flexible too!" (Without needing a garbage collector, thank you very much.)
 
@@ -46,7 +46,7 @@ int result = operation(5, 3);
 \end{lstlisting}
 
 \begin{notebox}
-Function pointers prevent the compiler from inlining. A direct call to \texttt{add(5, 3)} can be optimized to a constant 8. A call through a function pointer cannot, because the compiler doesn't know what function will be called until runtime. It's like trying to optimize a surprise party—you can't plan if you don't know who's showing up.
+Function pointers prevent the compiler from inlining. A direct call to \texttt{add(5, 3)} can be optimized to a constant 8. A call through a function pointer cannot, because the compiler doesn't know what function will be called until runtime. It's like trying to optimize a surprise party---you can't plan if you don't know who's showing up.
 \end{notebox}
 
 \section{Basic Syntax: Reading the Declaration}
@@ -601,7 +601,7 @@ int main(void) {
 \end{lstlisting}
 
 \begin{notebox}
-This is EXACTLY how GTK+, GObject, and many other C libraries implement object-oriented programming! The VTable pattern is fundamental to understanding large C codebases. C++ virtual functions are implemented the same way under the hood! So when C++ programmers brag about polymorphism, just smile and nod—we've been doing it since 1972.
+This is EXACTLY how GTK+, GObject, and many other C libraries implement object-oriented programming! The VTable pattern is fundamental to understanding large C codebases. C++ virtual functions are implemented the same way under the hood! So when C++ programmers brag about polymorphism, just smile and nod---we've been doing it since 1972.
 \end{notebox}
 
 \section{Why VTable Must Be First Member}

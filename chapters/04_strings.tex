@@ -177,7 +177,7 @@ free(str);
 \end{lstlisting}
 
 \begin{notebox}
-The \texttt{+1} for the null terminator is the most common source of string bugs. Always remember it! \texttt{strlen("Hello")} returns 5, but you need 6 bytes to store it. That one byte is like the friend you forgot to invite to your party—it WILL come back to haunt you.
+The \texttt{+1} for the null terminator is the most common source of string bugs. Always remember it! \texttt{strlen("Hello")} returns 5, but you need 6 bytes to store it. That one byte is like the friend you forgot to invite to your party---it WILL come back to haunt you.
 \end{notebox}
 
 \section{Safe String Operations: strncpy and Friends}
@@ -328,7 +328,7 @@ void safe_input_getline(void) {
 \end{lstlisting}
 
 \begin{warningbox}
-\texttt{gets()} is so dangerous it was REMOVED from C11 standard! Any code using it is vulnerable. Always use \texttt{fgets()} or \texttt{getline()} instead. gets() is the function equivalent of "hold my beer and watch this"—nothing good comes from it.
+\texttt{gets()} is so dangerous it was REMOVED from C11 standard! Any code using it is vulnerable. Always use \texttt{fgets()} or \texttt{getline()} instead. gets() is the function equivalent of "hold my beer and watch this"---nothing good comes from it.
 \end{warningbox}
 
 \section{Format String Vulnerabilities}
