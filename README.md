@@ -4,6 +4,8 @@ A comprehensive book covering real-world C programming patterns and idioms that 
 
 ## 📖 About This Book
 
+This is an AI generated book.
+
 Ever wondered how professional C programmers structure their code? This book bridges the gap between "I know C syntax" and "I can write production C code." It's packed with practical patterns used in SQLite, Redis, Linux kernel, Git, and other major C projects.
 
 ### What's Inside
